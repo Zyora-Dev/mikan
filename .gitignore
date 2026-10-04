@@ -1,0 +1,17 @@
+.DS_Store
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
+*.tsbuildinfo
+*.log
+*.pem
+*.key
+*.db
+*.sqlite
+*.sqlite3

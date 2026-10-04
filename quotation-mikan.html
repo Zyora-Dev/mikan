@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Zlabs — Quotation for Mikan Engineering Pvt Ltd</title>
+  <style>
+    @page { size: A4; margin: 14mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #20221e; background: #222420; font: 12px/1.4 Arial, Helvetica, sans-serif; }
+    .page { max-width: 210mm; margin: 24px auto; padding: 14mm; background: #fff; box-shadow: 0 12px 40px #0003; }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 16px 18px; color: #fff; background: linear-gradient(110deg, #080a07 0%, #171e0f 58%, #45631c 85%, #b9f34b 100%); border-bottom: 4px solid #b9f34b; }
+    .brand { width: 140px; height: 66px; object-fit: contain; background: transparent; }
+    .company { text-align: right; font-size: 10px; padding: 5px 8px; background: #0a0d08; border-radius: 4px; }
+    .company strong { display: block; font-size: 18px; color: #c2fa68; margin-bottom: 3px; }
+    a { color: inherit; text-decoration: none; }
+    .title { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 15px 0 12px; }
+    h1 { font-size: 23px; letter-spacing: 2px; margin: 0; color: #10120e; }
+    .date { font-size: 10px; }
+    .client { padding: 10px 13px; background: #f4f5f1; border-left: 4px solid #8ab931; }
+    .label { font-size: 9px; text-transform: uppercase; letter-spacing: 1.3px; color: #555e4b; margin-bottom: 3px; }
+    .client strong { font-size: 14px; }
+    h2 { color: #11140d; font-size: 13px; margin: 14px 0 6px; }
+    p { margin: 4px 0; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 25px; }
+    ul { margin: 3px 0 0; padding-left: 16px; }
+    li { margin: 3px 0; }
+    li::marker { color: #597d1f; }
+    table { width: 100%; border-collapse: collapse; margin-top: 7px; }
+    th { background: #151811; color: #fff; text-align: left; padding: 8px 11px; font-size: 11px; }
+    td { padding: 10px 11px; border-bottom: 1px solid #dce0d5; vertical-align: top; }
+    th:last-child, td:last-child { text-align: right; white-space: nowrap; }
+    .subtext { font-size: 10.5px; color: #555d4e; margin-top: 4px; }
+    .total { display: flex; justify-content: space-between; align-items: center; background: #c2fa68; padding: 10px 12px; margin-top: 8px; color: #10150a; }
+    .total strong { font-size: 22px; }
+    .words { font-size: 10px; margin-top: 6px; }
+    .notes { padding-top: 4px; }
+    .signature { margin-top: 14px; text-align: right; }
+    footer { display: flex; justify-content: space-between; gap: 10px; border-top: 1px solid #dce0d5; margin-top: 12px; padding-top: 8px; font-size: 9px; color: #555d4e; }
+    .architecture-header { min-height: 91px; }
+    .architecture-header h1 { color: white; font-size: 21px; letter-spacing: 1px; }
+    .architecture-header .label { color: #c2fa68; }
+    .page-number { border: 1px solid #b9f34b; color: #c2fa68; background: #11170c; padding: 8px 10px; font-size: 11px; white-space: nowrap; }
+    .intro { margin: 14px 0; color: #4f5747; }
+    .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .metric { padding: 12px; background: #f4f5f1; border-top: 3px solid #b9f34b; }
+    .metric strong { display: block; color: #14180f; font-size: 19px; }
+    .metric span { font-size: 10px; color: #555d4e; }
+    figure { margin: 12px 0; padding: 12px; border: 1px solid #dce0d5; border-radius: 6px; }
+    .architecture { display: block; width: 100%; height: auto; }
+    figcaption { color: #555d4e; font-size: 10px; margin-top: 6px; }
+    .benefits { gap: 10px; }
+    .benefit { padding: 11px 12px; border: 1px solid #dce0d5; border-left: 3px solid #8ab931; }
+    .benefit h2 { margin: 0 0 5px; font-size: 12px; }
+    .benefit p { font-size: 11px; margin: 0; }
+    .closing { padding: 13px 15px; margin-top: 14px; background: #151811; color: #fff; border-left: 4px solid #b9f34b; }
+    .closing strong { color: #c2fa68; }
+    section, .client, .total, .signature, tr, figure, .metrics, .closing { break-inside: avoid; }
+    @media print {
+      body { background: white; font-size: 11px; line-height: 1.3; }
+      .page { margin: 0; padding: 0; max-width: none; box-shadow: none; }
+      .page + .page { break-before: page; }
+      h2 { margin-top: 11px; }
+      .signature { margin-top: 12px; }
+      .architecture { height: 295px; }
+      * { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    }
+    @media screen and (max-width: 600px) {
+      .page { margin: 0 0 18px; padding: 20px; }
+      header { flex-direction: column; align-items: flex-start; gap: 10px; }
+      .company { text-align: left; }
+      .grid { grid-template-columns: 1fr; }
+      .metrics { gap: 5px; }
+      .metric { padding: 9px; }
+      footer { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header>
+      <img class="brand" src="logo/zlabs.webp" alt="Zlabs logo">
+      <div class="company">
+        <strong>Zlabs</strong>
+        A4/5, Pallivilai Road, Vetturnimadam,<br>Nagercoil – 629003<br>
+        Email: <a href="mailto:info@zyoralabs.com">info@zyoralabs.com</a> · Web: <a href="https://www.zyoralabs.com">www.zyoralabs.com</a><br>
+        Mobile: <a href="tel:+918940189694">+91 8940189694</a>
+      </div>
+    </header>
+    <div class="title">
+      <h1>QUOTATION</h1>
+      <div class="date">Date: 03 October 2026</div>
+    </div>
+    <section class="client" aria-label="Client details">
+      <div class="label">Prepared for</div>
+      <strong>Mikan Engineering Pvt Ltd</strong>
+      <p>Door No. 2/165/B, Mikan Complex, Thenkaiprai Road,<br>Chithanthopu, India – 629810</p>
+      <p>Mobile: +91 8344390703 · Email: <a href="mailto:info@mikan-groups.com">info@mikan-groups.com</a><br>
+      Web: <a href="https://www.mikan-groups.com">www.mikan-groups.com</a></p>
+    </section>
+    <section>
+      <h2>Cloud Storage &amp; Infrastructure</h2>
+      <p>AWS S3 bucket hosted in the <strong>Mumbai region (ap-south-1)</strong>, with a cloud control panel and migration from Zoho WorkDrive.</p>
+      <p><strong>Storage allocation: 15 TB + 1 TB additional reserve = 16 TB total.</strong></p>
+    </section>
+    <div class="grid">
+      <section>
+        <h2>Cloud Control Panel</h2>
+        <ul>
+          <li>Super Admin, Manager, and Team access.</li>
+          <li>Super Admin access to all audit logs, storage and usage statistics, and platform-wide monitoring.</li>
+          <li>Administrator-controlled storage allocation to teams.</li>
+          <li>No application-imposed limit on users or teams.</li>
+          <li>Role-based access management.</li>
+        </ul>
+      </section>
+      <section>
+        <h2>Security &amp; Content Delivery</h2>
+        <ul>
+          <li>Email OTP-based login.</li>
+          <li>Geo-fencing for access restrictions.</li>
+          <li>Employee activity audit logs.</li>
+          <li>Cloudflare global CDN integration for eligible content, with access controls preserved.</li>
+        </ul>
+      </section>
+      <section>
+        <h2>Migration Infrastructure</h2>
+        <ul>
+          <li>Windows VM-based transfer infrastructure.</li>
+          <li>One-time migration of approximately 7 TB from Zoho WorkDrive to AWS S3.</li>
+          <li>Migration infrastructure and transfer charges included.</li>
+        </ul>
+      </section>
+      <section>
+        <h2>Additional Features</h2>
+        <ul>
+          <li>Hierarchical approval workflow for soft deletion and archiving.</li>
+          <li>API integration capability for compatible third-party applications.</li>
+        </ul>
+      </section>
+    </div>
+    <section>
+      <h2>Commercial Offer</h2>
+      <table aria-label="Quotation pricing">
+        <thead><tr><th>Description</th><th>Amount (INR)</th></tr></thead>
+        <tbody><tr><td><strong>All-inclusive cloud storage and infrastructure package</strong><div class="subtext">One year of AWS S3 storage within the stated 16 TB allocation, cloud control panel, infrastructure, and the one-time migration described above.</div></td><td><strong>₹80,000</strong></td></tr></tbody>
+      </table>
+      <div class="total"><span><strong style="font-size:14px">Total — All Charges Included</strong></span><strong>₹80,000</strong></div>
+      <p class="words">Amount in words: Indian Rupees Eighty Thousand Only.</p>
+    </section>
+    <section class="notes">
+      <h2>Coverage &amp; Maintenance</h2>
+      <p><strong>Coverage:</strong> AWS storage and infrastructure charges are included for one year. Migration is a one-time service.</p>
+      <p><strong>AMC:</strong> Optional, based on the client's requirements, and quoted separately if requested.</p>
+    </section>
+    <div class="signature"><strong>For Zlabs</strong><br><span class="subtext">Authorized Signatory</span></div>
+    <footer><span>Zlabs · www.zyoralabs.com · info@zyoralabs.com · +91 8940189694</span><span>01 / 02</span></footer>
+  </main>
+  <section class="page" aria-label="Solution architecture and business benefits">
+    <header class="architecture-header">
+      <div><div class="label">Zlabs / Solution overview</div><h1>CONNECTED. CONTROLLED.<br>BUILT FOR YOUR TEAMS.</h1></div>
+      <div class="page-number">02 / 02</div>
+    </header>
+    <p class="intro">A centralized document platform for Mikan Engineering Pvt Ltd, bringing team access, storage allocation, and approval workflows together in one cloud control panel.</p>
+    <div class="metrics">
+      <div class="metric"><strong>16 TB</strong><span>15 TB allocation + 1 TB reserve</span></div>
+      <div class="metric"><strong>Mumbai</strong><span>AWS S3 · ap-south-1</span></div>
+      <div class="metric"><strong>3 access roles</strong><span>Super Admin · Manager · Team</span></div>
+    </div>
+    <h2>Proposed Solution Architecture</h2>
+    <figure>
+      <svg class="architecture" viewBox="0 0 640 365" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="architecture-title architecture-description">
+        <title id="architecture-title">Cloud access and one-time migration architecture</title>
+        <desc id="architecture-description">Super Admin, Manager, and Team users access the cloud control panel through Cloudflare. The Super Admin can access all audit logs, storage and usage statistics, and platform-wide monitoring. The panel enforces email OTP login, roles, and geo-fencing, and authorizes access to a private AWS S3 bucket in Mumbai. During the one-time migration, Zoho WorkDrive files pass through a Windows VM to AWS S3. Compatible business applications can integrate through the application API.</desc>
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#557529"/></marker>
+          <marker id="migration-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8Z" fill="#73786b"/></marker>
+        </defs>
+        <g font-family="Arial, Helvetica, sans-serif" text-anchor="middle">
+          <rect x="10" y="8" width="175" height="65" rx="7" fill="#f3f5ef" stroke="#d6ddcc"/>
+          <text x="97" y="33" font-size="13" font-weight="bold" fill="#171b12">Your teams</text>
+          <text x="97" y="53" font-size="10" fill="#505946">Super Admin · Manager · Team</text>
+          <rect x="228" y="8" width="175" height="65" rx="7" fill="#f3f5ef" stroke="#d6ddcc"/>
+          <text x="315" y="33" font-size="13" font-weight="bold" fill="#171b12">Cloudflare edge</text>
+          <text x="315" y="53" font-size="10" fill="#505946">Delivery of eligible content</text>
+          <rect x="447" y="8" width="183" height="65" rx="7" fill="#f3f5ef" stroke="#d6ddcc"/>
+          <text x="538" y="33" font-size="13" font-weight="bold" fill="#171b12">Business applications</text>
+          <text x="538" y="53" font-size="10" fill="#505946">Compatible API integrations</text>
+          <path d="M185 40H226 M315 73V112 M538 73V111" fill="none" stroke="#557529" stroke-width="2" marker-end="url(#arrow)"/>
+          <rect x="130" y="114" width="500" height="76" rx="7" fill="#151811"/>
+          <text x="380" y="140" font-size="15" font-weight="bold" fill="#c2fa68">CLOUD CONTROL PANEL &amp; APPLICATION API</text>
+          <text x="380" y="160" font-size="11" fill="#fff">Email OTP · Role permissions · Geo-fencing · Team quotas</text>
+          <text x="380" y="178" font-size="11" fill="#fff">Super Admin: audit logs, statistics &amp; monitoring · Approval workflows</text>
+          <path d="M538 190V260" fill="none" stroke="#557529" stroke-width="2" marker-end="url(#arrow)"/>
+          <text x="455" y="219" font-size="10" fill="#505946">Authorized access</text>
+          <text x="455" y="234" font-size="10" fill="#505946">Private storage</text>
+          <text x="184" y="243" font-size="10" font-weight="bold" letter-spacing="1" fill="#505946">ONE-TIME MIGRATION · APPROX. 7 TB</text>
+          <rect x="10" y="263" width="169" height="76" rx="7" fill="#f3f5ef" stroke="#d6ddcc"/>
+          <text x="94" y="291" font-size="13" font-weight="bold" fill="#171b12">Zoho WorkDrive</text>
+          <text x="94" y="312" font-size="10" fill="#505946">Existing document library</text>
+          <rect x="221" y="263" width="177" height="76" rx="7" fill="#f3f5ef" stroke="#d6ddcc"/>
+          <text x="309" y="291" font-size="13" font-weight="bold" fill="#171b12">Windows VM</text>
+          <text x="309" y="312" font-size="10" fill="#505946">Migration transfer infrastructure</text>
+          <rect x="445" y="263" width="185" height="76" rx="7" fill="#c2fa68" stroke="#8ab931"/>
+          <text x="537" y="287" font-size="14" font-weight="bold" fill="#171b12">AWS S3 · Mumbai</text>
+          <text x="537" y="307" font-size="11" fill="#29371b">15 TB + 1 TB reserve</text>
+          <text x="537" y="323" font-size="10" fill="#29371b">ap-south-1</text>
+          <path d="M179 300H218 M398 300H442" fill="none" stroke="#73786b" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#migration-arrow)"/>
+          <text x="320" y="358" font-size="10" fill="#505946">Solid arrows: application access flow · Dashed arrows: migration flow</text>
+        </g>
+      </svg>
+      <figcaption>Conceptual architecture. File access remains permission-controlled; private responses bypass shared caching unless an authorized delivery policy is configured. The S3 bucket is hosted in Mumbai; CDN processing may occur globally.</figcaption>
+    </figure>
+    <h2>Designed Around Your Operations</h2>
+    <div class="grid benefits">
+      <section class="benefit"><h2>Super Admin visibility &amp; control</h2><p>Access all audit logs, storage and usage statistics, and platform-wide monitoring. Manage users, teams, and storage allocations centrally.</p></section>
+      <section class="benefit"><h2>Clear responsibility</h2><p>Separate administrative, managerial, and team access so each role works within its assigned permissions.</p></section>
+      <section class="benefit"><h2>Accountable document handling</h2><p>Employee activity logs and hierarchical deletion approvals support visibility and controlled document lifecycle decisions.</p></section>
+      <section class="benefit"><h2>Room for future connections</h2><p>API integration capability provides a foundation for connecting compatible business applications and workflows.</p></section>
+    </div>
+    <section>
+      <h2>A Simple Operating Model</h2>
+      <p><strong>Allocate → Access → Collaborate → Govern.</strong> The administrator assigns team capacity, users sign in with email OTP, role permissions control file access, and approval workflows govern soft deletion and archiving.</p>
+    </section>
+    <div class="closing"><strong>One annual package. One coordinated solution.</strong><br>₹80,000 includes the stated AWS storage, infrastructure, cloud control panel, and one-time migration. AMC remains optional and can be tailored to client requirements.</div>
+    <footer><span>Zlabs · Cloud storage &amp; infrastructure for Mikan Engineering Pvt Ltd</span><span>02 / 02</span></footer>
+  </section>
+</body>
+</html>
