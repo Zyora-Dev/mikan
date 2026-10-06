@@ -165,8 +165,8 @@ export async function teamProxy(request: NextRequest, path: string, scope: "comp
     const clientIdentity: Record<string, string> = {};
     if (scope === "team" && ["auth/password", "auth/otp/request", "auth/otp/verify", "auth/recover"].includes(path)) {
       const secret = process.env.TEAM_PROXY_SECRET;
-      const header = process.env.TEAM_CLIENT_IP_HEADER;
-      if (process.env.NODE_ENV !== "development" || secret || header) {
+      const header = process.env.TEAM_CLIENT_IP_HEADER?.trim();
+      if (header) {
         if (!secret || secret.length < 32 || !header || !/^[a-z0-9-]+$/.test(header)) return fail("Authentication proxy is not configured.", 503);
         const address = request.headers.get(header) || "";
         if (!isIP(address)) return fail("Verified client address required.", 403);

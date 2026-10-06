@@ -67,7 +67,7 @@ services:
           name: mikan-api
           envVarKey: TEAM_PROXY_SECRET
       - key: TEAM_CLIENT_IP_HEADER
-        sync: false
+        value: ''
 databases:
   - name: mikan-db
     region: singapore

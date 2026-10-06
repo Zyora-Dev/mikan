@@ -1009,7 +1009,12 @@ transactional uniqueness constraints; client-selected company IDs are not accept
 Before sending external invitations, configure a reachable HTTPS `TEAM_PUBLIC_ORIGIN`
 matching the frontend `ADMIN_PUBLIC_ORIGIN` and backend `ADMIN_ORIGINS`. The default
 localhost link works only on the development machine. Keep the backend private,
-enable secure cookies and add trusted perimeter rate limits. Configure the same
+enable secure cookies and add trusted perimeter rate limits. Team sign-in does not
+require client-IP header configuration. Without a signed identity, aggregate limits
+use the backend connection address (shared by users behind the frontend), ignoring
+caller-supplied IP headers. Account and OTP limits remain independent.
+
+For optional per-client aggregate limits, configure the same
 random `TEAM_PROXY_SECRET` (at least 32 characters) in the backend and frontend
 server environments, never in `NEXT_PUBLIC_*`. Set frontend `TEAM_CLIENT_IP_HEADER`
 to a lowercase header name that the trusted ingress **always overwrites** with one
@@ -1018,11 +1023,11 @@ network access to Next to that ingress, and keep the backend inaccessible public
 Merely selecting `x-forwarded-for` without establishing this trust is unsafe.
 Next signs the address, timestamp, method and backend path; the backend verifies
 the signature within 30 seconds and uses the normalized IP for aggregate limits.
-Keep server clocks synchronized. Missing production Next configuration fails closed;
-with a backend secret configured, unsigned auth requests are rejected. Account and
-OTP limits remain independent. Development without these settings still uses the
-backend socket IP and therefore shares the proxy's aggregate limit. Ordinary
-forwarded headers are not trusted by the backend. Schedule retention cleanup of expired team
+Keep server clocks synchronized. Leave `TEAM_CLIENT_IP_HEADER` empty to disable
+signing, including in production. An existing backend secret alone does not require
+signed requests. Explicitly enabled signing still rejects invalid configuration,
+missing/invalid addresses, and invalid or expired signatures. Ordinary forwarded
+headers are not trusted by the backend. Schedule retention cleanup of expired team
 verification, OTP, session and old rate-limit records in production.
 
 ## Local Transfer Hardening

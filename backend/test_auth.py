@@ -1222,9 +1222,11 @@ class AdminAuthTests(unittest.TestCase):
                 with self.assertRaises(HTTPException) as error:
                     authentication_client(invalid)
                 self.assertEqual(error.exception.status_code, 403)
-        with patch.dict('os.environ', {'TEAM_PROXY_SECRET': ''}):
-            direct = Request({'type': 'http', 'method': 'POST', 'path': path, 'client': ('127.0.0.1', 3000), 'headers': [(b'x-forwarded-for', b'192.0.2.1')]})
-            self.assertEqual(authentication_client(direct), '127.0.0.1')
+        for configured_secret in ('', secret, 'short'):
+            with self.subTest(configured_secret=configured_secret), patch.dict('os.environ', {'TEAM_PROXY_SECRET': configured_secret}):
+                direct = Request({'type': 'http', 'method': 'POST', 'path': path, 'client': ('127.0.0.1', 3000),
+                    'headers': [(b'x-forwarded-for', b'192.0.2.1'), (b'x-mikan-client-ip', b'192.0.2.2')]})
+                self.assertEqual(authentication_client(direct), '127.0.0.1')
 
     def test_multipart_part_manifest(self):
         from uploads import MIN_PART_BYTES, multipart_parts

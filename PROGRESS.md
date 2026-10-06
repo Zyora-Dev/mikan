@@ -1,5 +1,18 @@
 # Mikan Progress
 
+## Optional Login IP Configuration - 2026-10-06
+- Removed the mandatory production client-IP configuration gate: frontend signs only when TEAM_CLIENT_IP_HEADER is nonblank; backend accepts unsigned requests using the connection address even if an existing TEAM_PROXY_SECRET is present. Caller IP headers are not trusted. Explicitly enabled signing retains address, signature and freshness checks.
+- Blueprint now sets TEAM_CLIENT_IP_HEADER to an empty value instead of prompting. Existing password/account/OTP/recovery limits are unchanged; aggregate connection-address limits are shared behind the frontend. Deployment and backend documentation updated.
+- PASS: isolated actual frontend proxy tests for production password, OTP request/verify and recovery with missing/empty/whitespace header settings, existing/absent secrets, spoofed-header stripping and optional signing validation. Five rollback-isolated backend regressions passed with a configured secret (signed identity, password activation/isolation, OTP expiry/reuse/limits, recovery/mail failure, public guards); scoped frontend lint, Blueprint parsing/assertions and editor diagnostics passed.
+- User authorized committing and pushing this verified fix to main. No persistent application-data changes, provider messages or Render deployment performed. Both services need the updated code; sync the Blueprint to clear any existing header value. Deploy the backend first, then the frontend. Full production build and live Render login remain unverified.
+
+## Render Database Restore - 2026-10-06
+- User deployed the Blueprint at https://mikan.zyora.cloud and explicitly authorized restoring local data. Verified the Render PostgreSQL16.15 database was empty through its external TLS connection before importing.
+- Stopped the local backend and background worker for cutover; local database remains intact. Created a fresh custom-format dump and private encryption-key backup outside the repository at /Users/redfoxhotels/mikan-cutover-20261006.Xdpsz9 (directory0700, dump/key0600).
+- Restored the complete database with pg_restore --single-transaction --exit-on-error --no-owner --no-acl. No fresh schema initialization, object deletion, production environment change, application deployment or provider messaging performed.
+- PASS: all30 application tables restored; exact row counts match the source for every table; zero incorrect table owners, zero incorrect sequence owners and zero invalid indexes. Source/target count manifests remain beside the backup.
+- Local backend remains stopped to avoid independent writes against shared storage. Render automation was not enabled. Stored R2/S3 objects remain in their existing buckets; only PostgreSQL data was restored. Production encryption-key configuration, browser sign-in, provider access and trusted team client-IP ingress remain unverified. Remove the temporary external database IP allowance after migration verification.
+
 ## Repository Checkpoint - 2026-10-06
 - User requested committing and pushing the completed local application and Render preparation to Zyora-Dev/mikan, branch main. This checkpoint does not authorize provisioning or deployment.
 - Confirmed production domain: https://mikan.zyora.cloud. The Blueprint still prompts for the canonical origin; enter this value during setup. Fresh versus migrated database remains undecided.

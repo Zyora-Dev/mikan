@@ -126,7 +126,7 @@ def limited(connection, key, maximum, seconds):
 def authentication_client(request):
     secret = os.environ.get('TEAM_PROXY_SECRET', '')
     signature = request.headers.get('x-mikan-client-signature')
-    if not secret and not signature:
+    if signature is None:
         return request.client.host if request.client else 'unknown'
     if len(secret) < 32:
         raise HTTPException(503, 'Authentication proxy is not configured.')

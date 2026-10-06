@@ -40,16 +40,17 @@ it can send queued emails/webhooks and permanently clean eligible Trash.
    node -e "console.log(require('node:crypto').randomBytes(32).toString('base64').replaceAll('+', '-').replaceAll('/', '_'))"
    ```
 
-5. Establish trusted client-IP ingress before enabling team sign-in. Set
-   `TEAM_CLIENT_IP_HEADER` to a lowercase header that ingress ALWAYS overwrites
-   with one verified IP. The current proxy rejects comma-separated chains.
-   Do not guess `x-forwarded-for` or trust a caller-supplied header. Verify Render's
-   actual header contract and test spoofed headers; if no suitable guaranteed
-   header is available, a trusted ingress adapter is required before launch.
-   Adding a separate proxy also requires preventing requests that bypass it.
+5. No client-IP header configuration is required for team sign-in. The Blueprint
+  sets `TEAM_CLIENT_IP_HEADER` to an empty value. Password, OTP and recovery
+  account limits remain enabled; aggregate limits use the backend connection
+  address, so users behind the frontend share those limits. Optional per-client
+  IP signing requires a verified ingress header that is always overwritten with
+  one trusted IP, not a caller-supplied header or comma-separated chain.
 
 The Blueprint generates and shares `TEAM_PROXY_SECRET` automatically. Neither
 that secret nor the encryption key belongs in a `NEXT_PUBLIC_*` variable.
+The proxy secret is used only when optional client-IP signing is enabled; keeping
+an existing secret does not block unsigned login requests over the private backend.
 Linked environment values refresh on Blueprint sync, not immediately when their
 source changes. After changing the origin or rotating the shared proxy secret,
 sync and redeploy both services and confirm their values match. `sync: false`
@@ -122,7 +123,8 @@ coordination and overlapping-deploy behaviour before scaling.
   recent feature additions. PostgreSQL 16 needs a fresh-install/restore test;
   local development currently uses PostgreSQL 14.
 - Confirm HTTPS, secure cookies, exact origins, private API/database access,
-  trusted client-IP anti-spoofing and successful sign-in for all three roles.
+  successful sign-in for all three roles, and shared aggregate rate-limit capacity.
+  If optional client-IP signing is enabled, verify ingress anti-spoofing as well.
 - Verify consented WhatsApp sending, invitations/OTP, workflows and notifications
   with authorized test accounts. API acceptance does not confirm delivery.
 - Test actual upload/download/multipart resume/cancel/version/Trash operations,
