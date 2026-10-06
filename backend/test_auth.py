@@ -856,9 +856,11 @@ class AdminAuthTests(unittest.TestCase):
     def test_insights_date_pagination_and_storage_accounting(self):
         fixture = self.private_file_fixture()
         for index in range(12):
-            self.connection.execute("INSERT INTO data_activity(company_id,actor,action,subject,detail,created_at) VALUES (%s,'Tester','file_edit',%s,'Date test','2026-01-10 23:59:59+00')",
+            self.connection.execute("INSERT INTO data_activity(company_id,actor,action,subject,detail,created_at) VALUES (%s,'Tester','file_edit',%s,'Date test','2026-01-10 18:29:59+00')",
                                     (self.company_id, f'Entry {index}'))
-        self.connection.execute("INSERT INTO data_activity(company_id,actor,action,subject,detail,created_at) VALUES (%s,'Tester','file_edit','Outside','Date test','2026-01-11 00:00:00+00')", (self.company_id,))
+        self.connection.execute("INSERT INTO data_activity(company_id,actor,action,subject,detail,created_at) VALUES (%s,'Tester','file_edit','Outside','Date test','2026-01-10 18:30:00+00')", (self.company_id,))
+        self.connection.execute("INSERT INTO data_activity(company_id,actor,action,subject,detail,created_at) VALUES (%s,'Tester','file_edit','Before','Date test','2026-01-09 18:29:59+00')", (self.company_id,))
+        self.connection.execute("UPDATE data_activity SET created_at='2026-01-09 18:30:00+00' WHERE company_id=%s AND subject='Entry 0'", (self.company_id,))
         base = '/company/teams/insights'
         query = '/audit?source=data&from_date=2026-01-10&to_date=2026-01-10'
         first = self.client.get(base + query).json()
@@ -871,6 +873,10 @@ class AdminAuthTests(unittest.TestCase):
         self.assertEqual(self.client.get(base + query + '&search=Entry%2011').json()['total'], 1)
         self.assertEqual(self.client.get(base + query + '&action=folder_create').json()['total'], 0)
         self.assertNotIn('Outside', self.client.get(base + query + '&export=true').text)
+        exported = self.client.get(base + query + '&export=true').text
+        self.assertNotIn('Before', exported)
+        self.assertIn('2026-01-10T00:00:00+05:30', exported)
+        self.assertIn('2026-01-10T23:59:59+05:30', exported)
         self.connection.execute("UPDATE stored_file SET state='trashed' WHERE id=%s", (fixture['id'],))
         other_team = self.connection.execute("INSERT INTO team(company_id,name) VALUES (%s,'New team') RETURNING id", (self.company_id,)).fetchone()['id']
         self.connection.execute('UPDATE team_account SET team_id=%s WHERE id=%s', (other_team, fixture['account_id']))

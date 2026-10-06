@@ -1,5 +1,19 @@
 # Mikan Progress
 
+## IST And Favicon Release - 2026-10-06
+- User authorized committing and pushing the verified IST and favicon changes to origin/main for manual Render deployment. This release supersedes the local-only status in the implementation notes below.
+- Confirmed Blueprint DATABASE_URL references Render mikan-db; backend uses that environment variable. No local database dependency in the Render configuration. Live Render environment was not inspected.
+- Deploy mikan-api first, then mikan-web. No database migration, restore or database redeployment is required. No Render deployment or local backend restart performed by the assistant.
+
+## Favicon And Local API Status - 2026-10-06
+- Added the supplied Zyora PNG URL to root icon, shortcut and Apple icon metadata; removed the competing default binary favicon. PASS: asset returns HTTP 200 with image/png, local rendered page has exactly three icon links all using the supplied PNG, and edited layout diagnostics are clean. Local only; no commit, push or deployment.
+- Confirmed no listener on 127.0.0.1:8000; frontend defaults to that API address. Backend remains deliberately stopped after Render cutover to avoid stale local metadata accessing shared buckets. No API configuration or database changes made.
+
+## Consistent IST Dates - 2026-10-06
+- User requested IST everywhere. All identified frontend date/time renderers now explicitly use Asia/Kolkata, including admin/company/team screens, files, workflows, activity, integrations and WhatsApp. UTC display labels changed to IST; browser timezone no longer controls date-only displays.
+- Date-filter SQL now uses IST calendar-day boundaries across shared queries, company/admin lists, storage, teams/people and folder activity. CSV exports use +05:30. Stored timestamps, expiry/security calculations and interval scheduling are unchanged; no schema/data migration or production configuration changes.
+- PASS: all 13 frontend date-formatting calls explicitly specify IST; seven actual standalone formatters pass midnight rollover under UTC, America/New_York and Asia/Tokyo. Six rollback-isolated backend regressions passed, including exact IST start/end boundaries and CSV offsets plus admin/company/team-folder/storage/member coverage. Frontend typecheck, changed-file ESLint and editor diagnostics passed. No commit, push or deployment performed for this change; local backend remains stopped. Full production build and live Render verification were not run.
+
 ## Optional Login IP Configuration - 2026-10-06
 - Removed the mandatory production client-IP configuration gate: frontend signs only when TEAM_CLIENT_IP_HEADER is nonblank; backend accepts unsigned requests using the connection address even if an existing TEAM_PROXY_SECRET is present. Caller IP headers are not trusted. Explicitly enabled signing retains address, signature and freshness checks.
 - Blueprint now sets TEAM_CLIENT_IP_HEADER to an empty value instead of prompting. Existing password/account/OTP/recovery limits are unchanged; aggregate connection-address limits are shared behind the frontend. Deployment and backend documentation updated.

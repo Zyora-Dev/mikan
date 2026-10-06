@@ -24,7 +24,7 @@ async function request(router: ReturnType<typeof useRouter>, path = "", options?
 }
 
 function displayDate(value: string) {
-  return new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  return new Date(value).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" }) + " IST";
 }
 
 export default function ZeptoMailSettings({ view }: { view: "card" | "details" }) {

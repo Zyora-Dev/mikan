@@ -209,7 +209,7 @@ def create_storage_router(admin_dependency, origin_dependency):
     def listing(provider: Provider, connection=Depends(get_db, scope="function"), search: str = Query("", max_length=160), page: int = Query(1, ge=1, le=100000), from_date: date | None = None, to_date: date | None = None):
         if from_date and to_date and from_date > to_date:
             raise HTTPException(422, "Start date must not be after end date.")
-        where = "provider=%s AND strpos(lower(name || ' ' || bucket), lower(%s)) > 0 AND (%s::date IS NULL OR created_at >= %s::date::timestamp AT TIME ZONE 'UTC') AND (%s::date IS NULL OR created_at < (%s::date + INTERVAL '1 day') AT TIME ZONE 'UTC')"
+        where = "provider=%s AND strpos(lower(name || ' ' || bucket), lower(%s)) > 0 AND (%s::date IS NULL OR created_at >= %s::date::timestamp AT TIME ZONE 'Asia/Kolkata') AND (%s::date IS NULL OR created_at < (%s::date + INTERVAL '1 day') AT TIME ZONE 'Asia/Kolkata')"
         values = (provider, search.strip(), from_date, from_date, to_date, to_date)
         total = connection.execute(f"SELECT count(*) AS total FROM storage_connection WHERE {where}", values).fetchone()["total"]
         items = connection.execute(f"SELECT {PUBLIC_COLUMNS} FROM storage_connection WHERE {where} ORDER BY created_at DESC, id DESC LIMIT 10 OFFSET %s", (*values, (page - 1) * 10)).fetchall()

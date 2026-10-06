@@ -61,7 +61,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<{ m
 
         <footer className={styles.footer}>
           <span>Powered by <a href="https://zyoralabs.com" target="_blank" rel="noopener noreferrer">Zyora Labs <ArrowRight size={12} aria-hidden="true" /></a></span>
-          <span className={styles.copyright}>&copy; {new Date().getFullYear()} Mikan Engineering</span>
+          <span className={styles.copyright}>&copy; {new Intl.DateTimeFormat("en-GB", { year: "numeric", timeZone: "Asia/Kolkata" }).format(new Date())} Mikan Engineering</span>
         </footer>
       </section>
     </main>

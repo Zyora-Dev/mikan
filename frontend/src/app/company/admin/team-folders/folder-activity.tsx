@@ -10,7 +10,7 @@ import local from "./folders.module.css";
 
 type Activity = { id: number; kind: "created" | "tracking_started" | "settings_changed"; actor_name: string | null; previous_quota_bytes: number | null; quota_bytes: number | null; previous_manager_access: boolean | null; manager_access: boolean | null; created_at: string };
 type ActivityList = { team: { id: number; name: string; created_at: string }; items: Activity[]; total: number };
-const dateText = (value: string) => new Date(value).toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "UTC" });
+const dateText = (value: string) => new Date(value).toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: "Asia/Kolkata" });
 const formatBytes = (bytes: number) => {
   const unit = bytes >= 1e12 ? "TB" : bytes >= 1e9 ? "GB" : bytes >= 1e6 ? "MB" : bytes >= 1e3 ? "KB" : "B";
   const divisor = { TB: 1e12, GB: 1e9, MB: 1e6, KB: 1e3, B: 1 }[unit];
@@ -59,15 +59,15 @@ export default function FolderActivity({ teamId }: { teamId: string }) {
 
   return <section className={`${styles.section} ${local.section}`} aria-labelledby="activity-title">
     <Link href="/company/admin/team-folders" className={local.backLink}><ArrowLeft size={17} />Team Folders</Link>
-    <div className={`${styles.heading} ${local.heading}`}><div className={local.activityTitle}><h1 id="activity-title">{activity ? `${activity.team.name} activity` : "Team Folder Activity"}</h1>{activity && <p className={local.secondary}>Created <time dateTime={activity.team.created_at}>{dateText(activity.team.created_at)} UTC</time></p>}</div><span>{loading ? "Loading..." : activity ? `${activity.total} events` : ""}</span></div>
+    <div className={`${styles.heading} ${local.heading}`}><div className={local.activityTitle}><h1 id="activity-title">{activity ? `${activity.team.name} activity` : "Team Folder Activity"}</h1>{activity && <p className={local.secondary}>Created <time dateTime={activity.team.created_at}>{dateText(activity.team.created_at)} IST</time></p>}</div><span>{loading ? "Loading..." : activity ? `${activity.total} events` : ""}</span></div>
     <div className={`${styles.filters} ${local.filters}`}>
-      <label className={styles.date}>Activity from (UTC)<input type="date" value={from} max={to || undefined} onChange={event => { setFrom(event.target.value); setPage(1); }} /></label>
-      <label className={styles.date}>Activity to (UTC)<input type="date" value={to} min={from || undefined} onChange={event => { setTo(event.target.value); setPage(1); }} /></label>
+      <label className={styles.date}>Activity from (IST)<input type="date" value={from} max={to || undefined} onChange={event => { setFrom(event.target.value); setPage(1); }} /></label>
+      <label className={styles.date}>Activity to (IST)<input type="date" value={to} min={from || undefined} onChange={event => { setTo(event.target.value); setPage(1); }} /></label>
       {(from || to) && <button className={styles.secondary} onClick={clear}>Clear</button>}
     </div>
     <div aria-live="polite" aria-busy={loading}>
       {error ? <div className={`${styles.empty} ${local.empty}`} role="alert"><p>{error}</p>{!missing && <button className={styles.secondary} onClick={() => setRevision(value => value + 1)}>Retry</button>}</div> : loading ? <div className={`${styles.skeleton} ${local.skeleton}`} role="status" aria-label="Loading folder activity">{[0, 1, 2, 3].map(row => <div key={row}><span /><span /><span /></div>)}</div> : !activity?.items.length ? <div className={`${styles.empty} ${local.empty}`}><History size={26} /><p>No activity in this period.</p>{(from || to) && <button className={styles.secondary} onClick={clear}>Clear filters</button>}</div> : <ol className={local.activityList}>{activity.items.map(event => <li key={event.id}>
-        <div className={local.eventHeading}><strong>{event.kind === "created" ? "Team folder created" : event.kind === "tracking_started" ? "Activity tracking started" : "Folder settings changed"}</strong><time dateTime={event.created_at}>{dateText(event.created_at)} UTC</time></div>
+        <div className={local.eventHeading}><strong>{event.kind === "created" ? "Team folder created" : event.kind === "tracking_started" ? "Activity tracking started" : "Folder settings changed"}</strong><time dateTime={event.created_at}>{dateText(event.created_at)} IST</time></div>
         <p className={local.secondary}>{event.actor_name ? `By ${event.actor_name}` : event.kind === "created" ? "Creator not recorded; date from team record." : "Existing settings recorded; earlier changes are unavailable."}</p>
         {event.quota_bytes !== null && (event.kind !== "settings_changed" || event.previous_quota_bytes !== event.quota_bytes) && <p className={local.eventDetail}><strong>Allocation:</strong> {event.previous_quota_bytes !== null && <><span title={`${event.previous_quota_bytes.toLocaleString("en-GB")} bytes`}>{formatBytes(event.previous_quota_bytes)}</span> to </>}<span title={`${event.quota_bytes.toLocaleString("en-GB")} bytes`}>{formatBytes(event.quota_bytes)}</span></p>}
         {event.manager_access !== null && (event.kind !== "settings_changed" || event.previous_manager_access !== event.manager_access) && <p className={local.eventDetail}><strong>Manager drive access:</strong> {event.previous_manager_access !== null && `${event.previous_manager_access ? "Read-only" : "Off"} to `}{event.manager_access ? "Read-only" : "Off"}</p>}

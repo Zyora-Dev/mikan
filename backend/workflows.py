@@ -228,7 +228,7 @@ def advance(connection, run, node_id):
 def date_clause(from_date, to_date, column="created_at"):
     if from_date and to_date and from_date > to_date:
         raise HTTPException(422, "Start date must not be after end date.")
-    return (f"(%s::date IS NULL OR {column} >= %s::date::timestamp AT TIME ZONE 'UTC') AND (%s::date IS NULL OR {column} < (%s::date + INTERVAL '1 day') AT TIME ZONE 'UTC')", [from_date, from_date, to_date, to_date])
+    return (f"(%s::date IS NULL OR {column} >= %s::date::timestamp AT TIME ZONE 'Asia/Kolkata') AND (%s::date IS NULL OR {column} < (%s::date + INTERVAL '1 day') AT TIME ZONE 'Asia/Kolkata')", [from_date, from_date, to_date, to_date])
 
 
 def list_rows(connection, table, columns, where, values, page, order="created_at DESC, id DESC"):

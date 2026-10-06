@@ -12,7 +12,7 @@ type Team = { id: number; name: string; created_at: string; people: number; mana
 type Person = { id: number; name: string; email: string; mobile: string; role: "manager" | "member"; team_id: number; team_name: string; status: "invited" | "active" | "disabled"; auth_type: string | null; invitation_expires_at: string | null; created_at: string };
 type List<Result> = { items: Result[]; total: number; summary?: { active: number; invited: number } };
 const empty = { name: "", email: "", mobile: "", role: "member", team_id: "" };
-const dateText = (value: string) => new Date(value).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
+const dateText = (value: string) => new Date(value).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
 const roleText = (value: string) => value === "manager" ? "Team Manager" : "Member";
 const stateText = (person: Person) => person.status === "invited" && person.invitation_expires_at && new Date(person.invitation_expires_at).getTime() < Date.now() ? "expired" : person.status;
 

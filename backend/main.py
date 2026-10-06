@@ -299,10 +299,10 @@ def list_company_admins(connection: Database, admin: SuperAdmin, search: str = Q
     filters = ["admin.role = 'admin'", "strpos(lower(admin.name || ' ' || admin.email || ' ' || admin.mobile || ' ' || company.name), lower(%s)) > 0"]
     values = [search.strip()]
     if from_date:
-        filters.append("admin.created_at >= (%s::date::timestamp AT TIME ZONE 'UTC')")
+        filters.append("admin.created_at >= (%s::date::timestamp AT TIME ZONE 'Asia/Kolkata')")
         values.append(from_date)
     if to_date:
-        filters.append("admin.created_at < ((%s::date + INTERVAL '1 day') AT TIME ZONE 'UTC')")
+        filters.append("admin.created_at < ((%s::date + INTERVAL '1 day') AT TIME ZONE 'Asia/Kolkata')")
         values.append(to_date)
     where = " AND ".join(filters)
     source = "FROM admin JOIN company ON company.id = admin.company_id"
@@ -347,10 +347,10 @@ def list_companies(connection: Database, admin: SuperAdmin, search: str = Query(
     filters = ["strpos(lower(name || ' ' || email || ' ' || mobile), lower(%s)) > 0"]
     values = [search.strip()]
     if from_date:
-        filters.append("created_at >= (%s::date::timestamp AT TIME ZONE 'UTC')")
+        filters.append("created_at >= (%s::date::timestamp AT TIME ZONE 'Asia/Kolkata')")
         values.append(from_date)
     if to_date:
-        filters.append("created_at < ((%s::date + INTERVAL '1 day') AT TIME ZONE 'UTC')")
+        filters.append("created_at < ((%s::date + INTERVAL '1 day') AT TIME ZONE 'Asia/Kolkata')")
         values.append(to_date)
     where = " AND ".join(filters)
     total = connection.execute(f"SELECT count(*) AS total FROM company WHERE {where}", values).fetchone()["total"]

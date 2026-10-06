@@ -2,6 +2,7 @@ import csv
 import io
 from datetime import date, datetime, timezone
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -71,7 +72,7 @@ COMPANY_STORAGE_CAPACITY_BYTES = 16_000_000_000_000
 
 def csv_cell(value):
     if isinstance(value, datetime):
-        return value.astimezone(timezone.utc).isoformat()
+        return value.astimezone(ZoneInfo('Asia/Kolkata')).isoformat()
     if isinstance(value, str) and (value.lstrip().startswith(('=', '+', '-', '@')) or value.startswith(('\t', '\r', '\n'))):
         return "'" + value
     return value

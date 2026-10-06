@@ -22,7 +22,7 @@ const providers = {
   s3: { name: "AWS S3", company: "Amazon Web Services", icon: Database, iconClass: styles.awsIcon, api: "Amazon S3", docs: "https://docs.aws.amazon.com/AmazonS3/latest/userguide/security_iam_service-with-iam.html" },
 };
 const empty = (provider: Provider): Fields => ({ name: "", bucket: "", region: provider === "r2" ? "auto" : "", account_id: "", endpoint: "", access_key: "", secret_key: "", enabled: false });
-const dateText = (value: string) => new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+const dateText = (value: string) => new Date(value).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" }) + " IST";
 const message = (reason: unknown) => reason instanceof Error ? reason.message : "Unable to complete the request.";
 
 async function request(router: ReturnType<typeof useRouter>, path = "", options?: RequestInit) {
@@ -132,8 +132,8 @@ export default function StorageSettings({ provider }: { provider: Provider }) {
     {notice && <div className={styles.notice} role="status"><Check size={18} /><span>{notice}</span><button className={styles.iconButton} aria-label="Dismiss notice" title="Dismiss notice" onClick={() => setNotice("")}><X size={16} /></button></div>}
     <form className={styles.storageFilters} onSubmit={applyFilters}>
       <label className={styles.field}>Search<input type="search" maxLength={160} value={filters.search} onChange={event => setFilters({ ...filters, search: event.target.value })} placeholder="Name or bucket" /></label>
-      <label className={styles.field}>Added from (UTC)<input type="date" max={filters.to_date || undefined} value={filters.from_date} onChange={event => setFilters({ ...filters, from_date: event.target.value })} /></label>
-      <label className={styles.field}>Added to (UTC)<input type="date" min={filters.from_date || undefined} value={filters.to_date} onChange={event => setFilters({ ...filters, to_date: event.target.value })} /></label>
+      <label className={styles.field}>Added from (IST)<input type="date" max={filters.to_date || undefined} value={filters.from_date} onChange={event => setFilters({ ...filters, from_date: event.target.value })} /></label>
+      <label className={styles.field}>Added to (IST)<input type="date" min={filters.from_date || undefined} value={filters.to_date} onChange={event => setFilters({ ...filters, to_date: event.target.value })} /></label>
       <button className={styles.secondary} disabled={pending}><Search size={16} />Search</button>
       <button className={styles.iconButton} type="button" title="Clear filters" aria-label="Clear filters" disabled={pending} onClick={() => { setFilters({ search: "", from_date: "", to_date: "" }); setQuery(""); setPage(1); refresh(); }}><X size={17} /></button>
     </form>

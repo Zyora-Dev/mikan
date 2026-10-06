@@ -14,7 +14,7 @@ type Result = { items: CompanyAdmin[]; total: number };
 type Fields = { name: string; email: string; mobile: string; password: string; company_id: string };
 const empty: Fields = { name: "", email: "", mobile: "", password: "", company_id: "" };
 const endpoint = "/api/admin/company-admins";
-const createdDate = (value: string) => new Date(value).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
+const createdDate = (value: string) => new Date(value).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
 
 export default function AdminManager() {
   const router = useRouter();

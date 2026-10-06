@@ -242,7 +242,7 @@ def create_team_router(company_dependency, origin_dependency, super_dependency=N
     def team_folders(connection=Depends(get_db, scope="function"), admin=Depends(company_dependency), search: str = Query("", max_length=160), page: int = Query(1, ge=1, le=100000), from_date: date | None = None, to_date: date | None = None):
         if from_date and to_date and from_date > to_date:
             raise HTTPException(422, "Start date must not be after end date.")
-        where = "company_id=%s AND strpos(lower(name), lower(%s)) > 0 AND (%s::date IS NULL OR created_at >= %s::date::timestamp AT TIME ZONE 'UTC') AND (%s::date IS NULL OR created_at < (%s::date + INTERVAL '1 day') AT TIME ZONE 'UTC')"
+        where = "company_id=%s AND strpos(lower(name), lower(%s)) > 0 AND (%s::date IS NULL OR created_at >= %s::date::timestamp AT TIME ZONE 'Asia/Kolkata') AND (%s::date IS NULL OR created_at < (%s::date + INTERVAL '1 day') AT TIME ZONE 'Asia/Kolkata')"
         values = (admin["company_id"], search.strip(), from_date, from_date, to_date, to_date)
         total = connection.execute(f"SELECT count(*) AS total FROM team WHERE {where}", values).fetchone()["total"]
         items = connection.execute(f"""SELECT id, name, storage_quota_bytes, storage_used_bytes, manager_can_view_drives, storage_alerts_enabled, storage_warning_percent, storage_critical_percent, created_at,
@@ -278,7 +278,7 @@ def create_team_router(company_dependency, origin_dependency, super_dependency=N
             raise HTTPException(404, "Team folder not found.")
         if from_date and to_date and from_date > to_date:
             raise HTTPException(422, "Start date must not be after end date.")
-        where = "company_id=%s AND team_id=%s AND (%s::date IS NULL OR created_at >= %s::date::timestamp AT TIME ZONE 'UTC') AND (%s::date IS NULL OR created_at < (%s::date + INTERVAL '1 day') AT TIME ZONE 'UTC')"
+        where = "company_id=%s AND team_id=%s AND (%s::date IS NULL OR created_at >= %s::date::timestamp AT TIME ZONE 'Asia/Kolkata') AND (%s::date IS NULL OR created_at < (%s::date + INTERVAL '1 day') AT TIME ZONE 'Asia/Kolkata')"
         values = (admin["company_id"], team_id, from_date, from_date, to_date, to_date)
         total = connection.execute(f"SELECT count(*) AS total FROM team_folder_activity WHERE {where}", values).fetchone()["total"]
         items = connection.execute(f"""SELECT id, kind, actor_name, previous_quota_bytes, quota_bytes, previous_manager_access, manager_access, created_at
@@ -289,7 +289,7 @@ def create_team_router(company_dependency, origin_dependency, super_dependency=N
     def list_teams(connection=Depends(get_db, scope="function"), admin=Depends(company_dependency), search: str = Query("", max_length=160), page: int = Query(1, ge=1, le=100000), page_size: int = Query(10, ge=1, le=100), from_date: date | None = None, to_date: date | None = None):
         if from_date and to_date and from_date > to_date:
             raise HTTPException(422, "Start date must not be after end date.")
-        where = "team.company_id = %s AND strpos(lower(team.name), lower(%s)) > 0 AND (%s::date IS NULL OR team.created_at >= %s::date::timestamp AT TIME ZONE 'UTC') AND (%s::date IS NULL OR team.created_at < (%s::date + INTERVAL '1 day') AT TIME ZONE 'UTC')"
+        where = "team.company_id = %s AND strpos(lower(team.name), lower(%s)) > 0 AND (%s::date IS NULL OR team.created_at >= %s::date::timestamp AT TIME ZONE 'Asia/Kolkata') AND (%s::date IS NULL OR team.created_at < (%s::date + INTERVAL '1 day') AT TIME ZONE 'Asia/Kolkata')"
         values = (admin["company_id"], search.strip(), from_date, from_date, to_date, to_date)
         total = connection.execute(f"SELECT count(*) AS total FROM team WHERE {where}", values).fetchone()["total"]
         items = connection.execute(f"""SELECT team.id, team.name, team.created_at,
@@ -315,7 +315,7 @@ def create_team_router(company_dependency, origin_dependency, super_dependency=N
     def list_people(connection=Depends(get_db, scope="function"), admin=Depends(company_dependency), search: str = Query("", max_length=160), page: int = Query(1, ge=1, le=100000), page_size: int = Query(10, ge=1, le=100), team_id: int | None = Query(None, gt=0, le=9223372036854775807), from_date: date | None = None, to_date: date | None = None):
         if from_date and to_date and from_date > to_date:
             raise HTTPException(422, "Start date must not be after end date.")
-        where = "account.company_id = %s AND (%s::bigint IS NULL OR account.team_id = %s) AND strpos(lower(account.name || ' ' || account.email || ' ' || account.mobile || ' ' || team.name), lower(%s)) > 0 AND (%s::date IS NULL OR account.created_at >= %s::date::timestamp AT TIME ZONE 'UTC') AND (%s::date IS NULL OR account.created_at < (%s::date + INTERVAL '1 day') AT TIME ZONE 'UTC')"
+        where = "account.company_id = %s AND (%s::bigint IS NULL OR account.team_id = %s) AND strpos(lower(account.name || ' ' || account.email || ' ' || account.mobile || ' ' || team.name), lower(%s)) > 0 AND (%s::date IS NULL OR account.created_at >= %s::date::timestamp AT TIME ZONE 'Asia/Kolkata') AND (%s::date IS NULL OR account.created_at < (%s::date + INTERVAL '1 day') AT TIME ZONE 'Asia/Kolkata')"
         values = (admin["company_id"], team_id, team_id, search.strip(), from_date, from_date, to_date, to_date)
         source = "FROM team_account account JOIN team ON team.id = account.team_id"
         total = connection.execute(f"SELECT count(*) AS total {source} WHERE {where}", values).fetchone()["total"]
@@ -597,7 +597,7 @@ def create_team_router(company_dependency, origin_dependency, super_dependency=N
             raise HTTPException(403, "Only team managers can view team members.")
         if from_date and to_date and from_date > to_date:
             raise HTTPException(422, "Start date must not be after end date.")
-        where = "company_id = %s AND team_id = %s AND status = 'active' AND strpos(lower(name), lower(%s)) > 0 AND (%s::date IS NULL OR activated_at >= %s::date::timestamp AT TIME ZONE 'UTC') AND (%s::date IS NULL OR activated_at < (%s::date + INTERVAL '1 day') AT TIME ZONE 'UTC')"
+        where = "company_id = %s AND team_id = %s AND status = 'active' AND strpos(lower(name), lower(%s)) > 0 AND (%s::date IS NULL OR activated_at >= %s::date::timestamp AT TIME ZONE 'Asia/Kolkata') AND (%s::date IS NULL OR activated_at < (%s::date + INTERVAL '1 day') AT TIME ZONE 'Asia/Kolkata')"
         values = (account["company_id"], account["team_id"], search.strip(), from_date, from_date, to_date, to_date)
         total = connection.execute(f"SELECT count(*) AS total FROM team_account WHERE {where}", values).fetchone()["total"]
         items = connection.execute(f"SELECT id, name, role, activated_at FROM team_account WHERE {where} ORDER BY role, name, id LIMIT %s OFFSET %s", (*values, page_size, (page - 1) * page_size)).fetchall()

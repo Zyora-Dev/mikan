@@ -13,7 +13,7 @@ the API; leaving the replacement token blank retains the existing one.
 Record the company name, international recipient number (including `+` and
 country code), consent source/evidence and explicit opt-in. This is an admin
 record of consent already obtained, not a public opt-in collection page.
-Revocation keeps the record but prevents future sends. Search, UTC date filters
+Revocation keeps the record but prevents future sends. Search, IST date filters
 and pagination apply to consent records and the active-recipient dropdown.
 
 Sending requires selecting an active consent, entering the company-name value
@@ -151,7 +151,7 @@ The existing frontend development task serves http://127.0.0.1:3000.
 
 Header bells open `/admin/notifications`, `/company/admin/notifications`, or
 `/team/notifications` for the signed-in role. All/Unread/Read tabs are URL-backed;
-search, inclusive UTC dates, category (company and team), and ten-row pagination filter
+search, inclusive IST dates, category (company and team), and ten-row pagination filter
 the current view. Each recipient has independent read/unread state. Team workflow
 notifications reuse existing records, so marking read in either workflow history
 or the notification center updates both. Request links retain existing request
@@ -241,7 +241,7 @@ only the corresponding role cookie; team sessions grant no reporting access.
 	filter job creation dates and show current outcomes/attempts. Failed jobs
 	are separate from request statuses; payloads and internal errors are omitted.
 - `search`, `from_date`, `to_date` and `page` select matching rows, ten per page.
-	Dates use inclusive UTC calendar days. Audit also accepts `source` and exact
+	Dates use inclusive IST calendar days. Audit also accepts `source` and exact
 	`action`. Searches are literal, not wildcard expressions. The UI shows an
 	as-of timestamp; reports are live queries, not historical snapshots.
 - `export=true` exports all matching rows, ignoring page, as UTF-8 CSV with a
@@ -360,7 +360,7 @@ caching; Next's development server overrides HTML Cache-Control with
 - `POST /team/files/{uuid}/shares/{recipient_id}/retry-email` requeues failed or
 	cancelled notifications. The grants list includes `email_status`.
 - `GET /team/files/shared` lists the authenticated recipient's available shared
-	files with ten-item pagination, filename search and UTC created-date filters.
+	files with ten-item pagination, filename search and IST created-date filters.
 
 New grants queue text email containing sender name/email, filename, the current
 View or Edit permission and the same Open file URL. The existing enabled Zoho CPaaS integration
@@ -496,7 +496,7 @@ assigned reviews and notifications. Submission selects an existing ready file
 owned by the signed-in account and tags eligible reviewers for each tagged step.
 Request detail pages show review tasks and activity, permitted private downloads,
 approval/rejection/change requests and cancellation. Rejection and change requests
-require a reason. Lists provide search, UTC date filters and pagination.
+require a reason. Lists provide search, IST date filters and pagination.
 
 - Backend admin APIs are under `/company/teams/workflows`; team APIs are under
 	`/team/workflows`. Browser proxies use `/api/company/teams/workflows` and
@@ -645,12 +645,12 @@ The matching proxy is `/api/company/teams/data`; backend routes are:
 
 | Method | Backend path | Purpose |
 | --- | --- | --- |
-| GET | `/company/teams/data/files` | Files or trash; search, UTC dates, team/owner/folder filters and 10-row pagination |
-| GET | `/company/teams/data/folders` | Explicit empty folders plus inferred ancestor paths; search, UTC dates and pagination |
+| GET | `/company/teams/data/files` | Files or trash; search, IST dates, team/owner/folder filters and 10-row pagination |
+| GET | `/company/teams/data/folders` | Explicit empty folders plus inferred ancestor paths; search, IST dates and pagination |
 | POST | `/company/teams/data/folders` | Create, rename a subtree, or remove an empty folder within one employee drive |
 | POST | `/company/teams/data/files/{uuid}` | Rename/move, trash, or restore a file, rejecting stale name/folder/state |
 | GET | `/company/teams/data/files/{uuid}/content` | Authenticated attachment stream with private no-store headers |
-| GET | `/company/teams/data/activity` | Company-admin operations and download requests; search, UTC dates and pagination |
+| GET | `/company/teams/data/activity` | Company-admin operations and download requests; search, IST dates and pagination |
 
 Company identity comes only from the company-admin session. Team sessions and
 platform-super-admin sessions do not grant access here. Provider connections,
@@ -678,9 +678,9 @@ private member drives. This does not create a bucket or a physical provider fold
 
 | Method | Backend path | Purpose |
 | --- | --- | --- |
-| GET | `/company/teams/folders` | Company-scoped teams, usage and settings; search, UTC team creation-date filters and 10-row pagination |
+| GET | `/company/teams/folders` | Company-scoped teams, usage and settings; search, IST team creation-date filters and 10-row pagination |
 | POST | `/company/teams/folders/{team_id}` | Set `storage_quota_bytes` and `manager_can_view_drives` |
-| GET | `/company/teams/folders/{team_id}/activity` | Creation/settings history; UTC `from_date`, `to_date` and 10-row `page` pagination |
+| GET | `/company/teams/folders/{team_id}/activity` | Creation/settings history; IST `from_date`, `to_date` and 10-row `page` pagination |
 
 The browser uses the matching `/api/company/teams/folders` proxy paths. Only an
 active company-admin session can read or change these settings; writes also
@@ -690,7 +690,7 @@ cannot configure them. Foreign-company team IDs return404.
 The history action opens `/company/admin/team-folders/{teamId}/activity`, a dedicated
 company-admin page with a Team Folders return link, date filters and pagination.
 It shows the folder's original team creation timestamp, allocation
-changes and manager-access changes, with UTC timestamps and admin-name snapshots.
+changes and manager-access changes, with timestamps displayed in IST and admin-name snapshots.
 Migration009 preserves existing creation dates without guessing creators and adds
 an explicit tracking-start snapshot. Earlier settings changes are unavailable.
 New team creation and changed settings append activity in the same transaction;
@@ -784,7 +784,7 @@ login; schedule retention cleanup for old login-attempt rows in production.
 Super admins manage companies at `/admin/companies`. Name, mobile, email, and
 address are required; website and logo are optional. Website URLs must use HTTP
 or HTTPS. Mobile numbers allow 7-15 digits with an optional leading `+`, spaces,
-parentheses, and hyphens. The list supports search, inclusive UTC creation-date
+parentheses, and hyphens. The list supports search, inclusive IST creation-date
 filters, and pagination. Create and edit are supported; company deletion is not.
 
 | Method | Backend path | Purpose |
@@ -853,7 +853,7 @@ per-connection cooldown and bounded SDK timeouts.
 | Method | Backend path | Purpose |
 | --- | --- | --- |
 | GET | `/integrations/storage` | Provider connection counts |
-| GET | `/integrations/storage/{provider}` | List with search, UTC dates and ten-item pagination |
+| GET | `/integrations/storage/{provider}` | List with search, IST dates and ten-item pagination |
 | POST | `/integrations/storage/{provider}` | Create a connection |
 | PUT | `/integrations/storage/{provider}/{id}` | Edit configuration or rotate credentials |
 | DELETE | `/integrations/storage/{provider}/{id}` | Remove saved configuration only |
@@ -878,7 +878,7 @@ by create/list responses. The form clears the password on close and successful s
 
 | Method | Backend path | Purpose |
 | --- | --- | --- |
-| GET | `/company-admins/` | List company Admins with search, UTC creation-date filters and pagination |
+| GET | `/company-admins/` | List company Admins with search, IST creation-date filters and pagination |
 | POST | `/company-admins/` | Create from `name`, `email`, `mobile`, `password`, `company_id` |
 
 Both endpoints require an active super-admin session; creation also requires an
@@ -927,7 +927,13 @@ then invite a person using full name, email, mobile, team and role (Team Manager
 or Member). The invitation form shows the assigned manager. One non-disabled
 manager per team is enforced in PostgreSQL, including pending invitations.
 Each account belongs to one team; team-account email addresses are globally unique.
-Teams and People lists include search, UTC creation-date filters and pagination.
+Teams and People lists include search, IST creation-date filters and pagination.
+
+All user-facing dates and times use Indian Standard Time (`Asia/Kolkata`, UTC+05:30),
+independent of browser or server timezone. Date filters include the entire selected
+IST calendar day, and CSV exports include the `+05:30` offset. Stored timestamps,
+API timestamp instants, expiry calculations and interval scheduling remain unchanged;
+no database migration or global server timezone change is required.
 
 Invitations use the enabled platform Zoho integration. On provider acceptance,
 the success notice is "Member Invited successfully." A send failure rolls back the new account

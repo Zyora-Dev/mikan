@@ -13,7 +13,7 @@ type ConsentList = { items: Consent[]; total: number };
 const endpoint = "/api/admin/integrations/whatsapp";
 const initialConsent = { company_name: "", recipient: "", source: "", opted_in: false };
 const tabs = [{ id: "send" as const, label: "Send Template", icon: Send }, { id: "consents" as const, label: "Consents", icon: ShieldCheck }, { id: "settings" as const, label: "Settings", icon: Settings2 }];
-const displayDate = (value: string) => new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+const displayDate = (value: string) => new Date(value).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" }) + " IST";
 
 export default function WhatsAppModule() {
   const router = useRouter();
