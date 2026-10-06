@@ -1,0 +1,79 @@
+services:
+  - type: pserv
+    name: mikan-api
+    runtime: python
+    rootDir: backend
+    region: singapore
+    plan: 1c-2g
+    numInstances: 1
+    autoDeployTrigger: 'off'
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m uvicorn main:app --host 0.0.0.0 --port "$PORT" --workers 1 --no-proxy-headers
+    maxShutdownDelaySeconds: 300
+    envVars:
+      - key: PYTHON_VERSION
+        value: '3.13.14'
+      - key: PORT
+        value: '10000'
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mikan-db
+          property: connectionString
+      - key: COOKIE_SECURE
+        value: 'true'
+      - key: ADMIN_ORIGINS
+        sync: false
+      - key: TEAM_PUBLIC_ORIGIN
+        fromService:
+          type: pserv
+          name: mikan-api
+          envVarKey: ADMIN_ORIGINS
+      - key: TEAM_PROXY_SECRET
+        generateValue: true
+      - key: INTEGRATION_ENCRYPTION_KEY
+        sync: false
+      - key: MIKAN_AUTOMATION_ENABLED
+        value: 'false'
+  - type: web
+    name: mikan-web
+    runtime: node
+    rootDir: frontend
+    region: singapore
+    plan: 1c-2g
+    numInstances: 1
+    autoDeployTrigger: 'off'
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: ADMIN_API_URL="http://$MIKAN_API_HOSTPORT" npm run start -- --hostname 0.0.0.0 --port "$PORT"
+    healthCheckPath: /admin/login
+    maxShutdownDelaySeconds: 300
+    envVars:
+      - key: NODE_VERSION
+        value: '22'
+      - key: NODE_ENV
+        value: production
+      - key: MIKAN_API_HOSTPORT
+        fromService:
+          type: pserv
+          name: mikan-api
+          property: hostport
+      - key: ADMIN_PUBLIC_ORIGIN
+        fromService:
+          type: pserv
+          name: mikan-api
+          envVarKey: ADMIN_ORIGINS
+      - key: TEAM_PROXY_SECRET
+        fromService:
+          type: pserv
+          name: mikan-api
+          envVarKey: TEAM_PROXY_SECRET
+      - key: TEAM_CLIENT_IP_HEADER
+        sync: false
+databases:
+  - name: mikan-db
+    region: singapore
+    plan: 1c-2g
+    postgresMajorVersion: '16'
+    databaseName: mikan
+    user: mikan
+    diskSizeGB: 20
+    ipAllowList: []

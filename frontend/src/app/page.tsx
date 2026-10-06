@@ -1,19 +1,16 @@
-"use client";
-
 import Image from "next/image";
+import { redirect } from "next/navigation";
+import { getTeamAccount } from "@/lib/team";
+import TeamAuth from "./team-auth";
 import { ArrowRight, LockKeyhole } from "lucide-react";
-import { useState, type FormEvent } from "react";
 import architecture from "../../public/architecture.jpg";
 import logo from "../../public/mikan-logo.jpg";
 import styles from "./page.module.css";
 
-export default function Home() {
-  const [notice, setNotice] = useState("");
-
-  function handleSignIn(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setNotice("Email sign-in is not connected yet. Please contact your administrator.");
-  }
+export default async function Home({ searchParams }: { searchParams: Promise<{ method?: string; next?: string }> }) {
+  const { method, next } = await searchParams;
+  const returnTo = typeof next === "string" && /^\/share\/[0-9a-f]{64}$/.test(next) ? next : "/team/files";
+  if (await getTeamAccount()) redirect(returnTo);
 
   return (
     <main className={styles.page}>
@@ -54,30 +51,7 @@ export default function Home() {
             <h1 id="login-heading">Welcome back.</h1>
             <p>Sign in to continue to your team&apos;s workspace.</p>
           </div>
-          <form onSubmit={handleSignIn} className={styles.form}>
-            <div className={styles.field}>
-              <label htmlFor="email">Work email</label>
-              <input
-                id="email"
-                name="email"
-                type="email"
-                autoComplete="email"
-                inputMode="email"
-                placeholder="you@company.com"
-                required
-                maxLength={254}
-                onChange={() => setNotice("")}
-                aria-describedby={notice ? "signin-notice" : undefined}
-              />
-            </div>
-            <button className={styles.submit} type="submit">
-              Continue with email
-              <ArrowRight size={18} strokeWidth={1.7} aria-hidden="true" />
-            </button>
-            <div className={styles.notice}>
-              {notice && <p id="signin-notice" role="status">{notice}</p>}
-            </div>
-          </form>
+          <TeamAuth initialMethod={method === "password" ? "password" : "otp"} returnTo={returnTo} />
           <div className={styles.accessNote}>
             <LockKeyhole size={15} strokeWidth={1.6} aria-hidden="true" />
             <span>For authorized Mikan team members</span>

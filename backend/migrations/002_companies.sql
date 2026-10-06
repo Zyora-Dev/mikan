@@ -1,0 +1,15 @@
+BEGIN;
+CREATE TABLE IF NOT EXISTS company (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name TEXT NOT NULL CHECK (length(btrim(name)) BETWEEN 1 AND 160),
+    mobile TEXT NOT NULL,
+    email TEXT NOT NULL,
+    website TEXT NOT NULL DEFAULT '',
+    address TEXT NOT NULL CHECK (length(btrim(address)) BETWEEN 1 AND 2000),
+    logo_data BYTEA,
+    created_by BIGINT REFERENCES admin(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS company_created_at_idx ON company(created_at DESC, id DESC);
+COMMIT;

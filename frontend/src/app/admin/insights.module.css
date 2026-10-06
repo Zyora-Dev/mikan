@@ -1,0 +1,18 @@
+.tools { display: flex; align-items: center; gap: 8px; }
+.tools button { display: inline-flex; align-items: center; gap: 8px; }
+.note, .caption { color: #334a3b; font-size: 12px; line-height: 1.6; }
+.caption { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin: 14px 0 10px; }
+.table { table-layout: auto; min-width: 880px; }
+.table th:first-child, .table th:last-child { width: auto; text-align: left; }
+.table td { max-width: 280px; white-space: pre-wrap; }
+.status { display: inline-block; padding: 3px 7px; border-radius: 4px; background: #edf1ee; color: #284233; text-transform: capitalize; }
+.status[data-state=failed], .status[data-state=rejected] { background: #fbe8ec; color: #922537; }
+.status[data-state=pending], .status[data-state=retry], .status[data-state=queued] { background: #fff2d8; color: #754c13; }
+.companyPicker { position: relative; width: fit-content; max-width: 100%; margin-bottom: 16px; z-index: 10; }
+.companyPicker > button { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.companyOptions { position: absolute; top: calc(100% + 6px); left: 0; width: 340px; max-width: calc(100vw - 40px); padding: 14px; border: 1px solid #bdcdc2; border-radius: 6px; background: #fff; box-shadow: 0 6px 22px #10291a18; display: grid; gap: 7px; }
+.companyOptions label { display: grid; gap: 6px; font-size: 13px; color: #263e30; }
+.companyOptions input { min-width: 0; width: 100%; padding: 9px; border: 1px solid #bdcdc2; border-radius: 4px; font: inherit; color: #18251f; }
+.companyOptions > button { text-align: left; padding: 9px; color: #18251f; background: #f3f6f4; border: 0; border-radius: 4px; font: inherit; font-size: 13px; overflow-wrap: anywhere; cursor: pointer; }
+.companyOptions > button:hover { background: #e4ede7; }
+@media(max-width:480px) { .tools { flex-wrap: wrap; } }

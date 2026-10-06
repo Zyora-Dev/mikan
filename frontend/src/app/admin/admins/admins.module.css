@@ -1,0 +1,13 @@
+.adminTable th:last-child { width: 110px; }
+.adminTable th:nth-child(5) { width: 85px; }
+.active { display: flex; gap: 10px; align-items: center; color: #18251f; }
+.active input { width: 18px; height: 18px; accent-color: #09865b; }
+.adminTable th:nth-child(4) { width: 116px; }
+.companySelect { min-width: 0; width: 100%; min-height: 42px; padding: 10px 12px; border: 1px solid #bdcdc2; border-radius: 5px; background: white; color: #18251f; font: inherit; font-weight: 400; }
+.companySelect:focus-visible { outline: 2px solid #09865b; outline-offset: 3px; }
+.password { display: flex; align-items: center; gap: 8px; }
+.password input { flex: 1; }
+.password button { flex-shrink: 0; }
+.status { display: inline-block; color: #215d40; font-size: 12px; font-weight: 600; }
+.companyState { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0; font-size: 13px; line-height: 1.6; color: #334c3e; }
+.companyState a { color: #176244; }

@@ -1,0 +1,17 @@
+.scope { padding: 24px 36px 0; max-width: 560px; }
+.selection { border: 0; padding: 0; margin: 24px 0; display: grid; gap: 0; }
+.selection legend { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+.category { display: flex; align-items: center; gap: 12px; padding: 16px 0; border-bottom: 1px solid #bdcdc2; color: #18251f; }
+.category input { width: 18px; height: 18px; flex-shrink: 0; accent-color: #09865b; }
+.category strong { margin-left: auto; font-variant-numeric: tabular-nums; }
+.warning { padding: 16px 0; color: #822b25; line-height: 1.65; }
+.warning p { margin: 6px 0; }
+.preserved { color: #215d40; line-height: 1.6; }
+.controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 24px; }
+.danger { background: #a52d28; border-color: #a52d28; color: #fff; }
+.danger:hover:not(:disabled) { background: #84231f; }
+.content { max-width: 760px; }
+.scopeName { overflow-wrap: anywhere; }
+.progress { width: 100%; accent-color: #09865b; height: 10px; }
+.summary { margin: 0; padding-left: 20px; line-height: 1.8; color: #18251f; }
+@media (max-width: 650px) { .scope { padding: 20px 18px 0; } }

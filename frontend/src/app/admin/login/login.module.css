@@ -1,0 +1,67 @@
+.page { min-height: 100svh; display: grid; grid-template-columns: 54% 46%; padding: 18px; background: #edf0f0; }
+.visual { position: relative; overflow: hidden; min-height: 740px; border-radius: 8px 0 0 8px; background: #e0e5e5; }
+.photo { object-fit: cover; object-position: 40% center; filter: grayscale(1); opacity: .64; }
+.visual::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(245,248,248,.91), transparent 40%, rgba(241,244,244,.96)); }
+.visualTop, .visualBottom { position: absolute; z-index: 1; left: 42px; right: 42px; color: #263438; }
+.visualTop { top: 38px; display: flex; justify-content: space-between; gap: 20px; font-size: 11px; font-weight: 600; }
+.visualBottom { bottom: 46px; }
+.line { display: block; width: 38px; height: 3px; background: #b83138; margin-bottom: 24px; }
+.visualBottom p { font-size: 64px; line-height: 1.04; margin-bottom: 28px; }
+.visualBottom > span:last-child { font-size: 11px; font-weight: 600; }
+.panel { display: flex; flex-direction: column; background: white; border-radius: 0 8px 8px 0; padding: 30px 38px 24px; min-width: 0; }
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 12px; color: #384246; }
+.back, .secure { display: inline-flex; align-items: center; gap: 7px; }
+.back:hover { color: #a72830; }
+.secure { color: #375952; }
+.formArea { width: 100%; max-width: 350px; margin: auto; padding: 64px 0 56px; }
+.logo { display: block; width: 185px; height: 73px; object-fit: contain; margin: 0 auto 32px; }
+.heading { text-align: center; margin-bottom: 34px; }
+.heading p { font-size: 11px; font-weight: 600; color: #5a3337; margin-bottom: 10px; }
+.heading h1 { font-size: 36px; font-weight: 500; line-height: 1.2; margin-bottom: 10px; }
+.heading > span { font-size: 13px; line-height: 1.6; color: #485256; }
+.form { width: 100%; }
+.field + .field { margin-top: 23px; }
+.field label { display: block; font-size: 13px; font-weight: 500; color: #303c40; margin-bottom: 9px; }
+.field input { width: 100%; height: 52px; border: 1px solid #e4e8e9; border-radius: 6px; background: #f2f4f5; padding: 0 15px; color: #1c2021; font-size: 14px; outline-offset: 2px; }
+.field input::placeholder { color: #687579; }
+.field input:focus { border-color: #b83138; }
+.password { position: relative; }
+.password input { padding-right: 52px; }
+.password button { position: absolute; right: 4px; top: 4px; width: 44px; height: 44px; border: 0; background: transparent; color: #3d4b50; cursor: pointer; display: grid; place-items: center; border-radius: 4px; }
+.password button:hover { background: #e5e9e9; }
+.errorSpace { min-height: 49px; padding: 9px 0; }
+.errorSpace p { color: #a5242d; font-size: 12px; line-height: 1.5; }
+.submit { display: flex; justify-content: center; align-items: center; gap: 10px; min-height: 50px; width: 100%; border: none; border-radius: 6px; background: #b83138; color: white; font-size: 14px; font-weight: 500; cursor: pointer; transition: background .2s; }
+.submit:hover { background: #9f252d; }
+.submit:disabled { cursor: wait; opacity: .75; }
+.access { margin-top: 25px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 11px; color: #455652; line-height: 1.5; }
+.footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; font-size: 11px; color: #4b565a; }
+.footer a { display: inline-flex; align-items: center; gap: 3px; color: #252e32; font-weight: 600; }
+.footer a:hover { text-decoration: underline; }
+.spinner { animation: rotate 1s linear infinite; }
+@keyframes rotate { to { transform: rotate(360deg); } }
+@media (max-width: 1100px) {
+  .page { grid-template-columns: 48% 52%; padding: 12px; }
+  .panel { padding: 28px; }
+  .visualTop, .visualBottom { left: 28px; right: 28px; }
+  .visualTop { flex-direction: column; gap: 10px; }
+  .visualBottom p { font-size: 52px; }
+}
+@media (max-width: 760px) {
+  .page { display: flex; flex-direction: column; padding: 0; }
+  .panel { order: 0; min-height: 100svh; padding: 26px; border-radius: 0; }
+  .visual { order: 1; min-height: 400px; border-radius: 0; }
+  .visualTop { flex-direction: row; flex-wrap: wrap; }
+  .visualBottom p { font-size: 48px; }
+  .formArea { padding: 52px 0; }
+  .footer { justify-content: center; }
+}
+@media (max-width: 360px) {
+  .panel { padding: 22px; }
+  .topbar { font-size: 11px; gap: 8px; }
+  .access { font-size: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; }
+  .submit { transition: none; }
+}

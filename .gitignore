@@ -1,4 +1,5 @@
 .DS_Store
+/quotation-mikan.html
 .venv/
 venv/
 __pycache__/
