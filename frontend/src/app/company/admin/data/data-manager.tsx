@@ -17,6 +17,7 @@ type EventRow = { id: number; actor: string; action: string; subject: string; de
 type Person = { id: number; name: string; team_id: number; team_name: string; email: string };
 type View = "files" | "folders" | "trash" | "activity";
 type RootRow = { id: string; name: string; path: string; kind: "folder" | "file"; size_bytes: number; state: "pending" | "ready"; created_at: string };
+type RootVersion = { id: string; version_label: string; name: string; size_bytes: number; source_modified_at: string | null; uploaded_at: string | null; current: boolean };
 type Edit = { kind: "file"; action: "edit" | "trash" | "restore"; file: FileRow } | { kind: "folder"; action: "create" | "rename" | "remove"; folder?: FolderRow };
 const base = "/api/company/teams/data";
 const bytes = (value: number) => value >= 1073741824 ? `${(value / 1073741824).toFixed(2)} GB` : value >= 1048576 ? `${(value / 1048576).toFixed(1)} MB` : value >= 1024 ? `${(value / 1024).toFixed(1)} KB` : `${value} B`;
@@ -79,6 +80,18 @@ export default function DataManager({ view, folder }: { view: View | "root"; fol
   return view === "root" ? <CompanyRoot key={folder} folder={folder} /> : <DriveDataManager view={view} />;
 }
 
+function RootVersions({ file, close }: { file: RootRow; close: () => void }) {
+  const [revision, setRevision] = useState(0);
+  const state = useResource<{ items: RootVersion[]; total: number }>(`${base}/root/files/${file.id}/versions`, true, revision);
+  return <dialog open className={shared.dialog} aria-labelledby="root-versions-title" onCancel={close}>
+    <header className={shared.dialogHeader}><h2 id="root-versions-title">Version history</h2><button type="button" className={shared.iconButton} title="Close" aria-label="Close version history" onClick={close}><X size={18} /></button></header>
+    <div className={styles.versionBody}><p className={styles.selection}>{file.name}</p><LoadState loading={state.loading} error={state.error} retry={() => setRevision(value => value + 1)} />
+      {state.data && <ul className={styles.versions}>{state.data.items.map(version => <li key={version.id}><div><strong>{version.current ? "Current version" : `Version ${version.version_label}`}</strong><small>{bytes(version.size_bytes)}{version.source_modified_at ? ` / Source modified ${dateTime(version.source_modified_at)}` : ""}</small></div><a className={shared.iconButton} href={version.current ? `${base}/root/files/${file.id}/content` : `${base}/root/files/${file.id}/versions/${version.id}/content`} title="Download version" aria-label={`Download ${version.current ? "current version" : `version ${version.version_label}`}`}><Download size={17} /></a></li>)}</ul>}
+    </div>
+    <footer className={shared.dialogFooter}><button type="button" className={shared.secondary} onClick={close}>Close</button></footer>
+  </dialog>;
+}
+
 function CompanyRoot({ folder }: { folder: string }) {
   const [search, setSearch] = useState("");
   const [from, setFrom] = useState("");
@@ -89,6 +102,7 @@ function CompanyRoot({ folder }: { folder: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [versionFile, setVersionFile] = useState<RootRow | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   const params = new URLSearchParams({ folder, search, page: String(page) });
   if (from) params.set("from_date", from);
@@ -113,6 +127,9 @@ function CompanyRoot({ folder }: { folder: string }) {
   function download(entry: RootRow) {
     return entry.kind === "file" && entry.state === "ready" ? <a className={shared.iconButton} href={`${base}/root/files/${entry.id}/content`} title="Download file" aria-label={`Download ${entry.name}`}><Download size={17} /></a> : null;
   }
+  function actions(entry: RootRow) {
+    return entry.kind === "file" && entry.state === "ready" ? <div className={styles.actions}><button type="button" className={shared.iconButton} title="Version history" aria-label={`Version history for ${entry.name}`} onClick={() => setVersionFile(entry)}><History size={17} /></button>{download(entry)}</div> : null;
+  }
   return <section className={`${shared.section} ${styles.section}`}>
     <div className={styles.heading}><h1>Data Administration</h1><div className={styles.actions}><button className={shared.iconButton} title="Refresh" aria-label="Refresh company root" onClick={() => setRevision(value => value + 1)}><RefreshCw size={18} /></button><button className={shared.primary} onClick={open}><FolderPlus size={17} />New folder</button></div></div>
     <DataViews view="root" />
@@ -121,9 +138,10 @@ function CompanyRoot({ folder }: { folder: string }) {
     <Filters search={search} setSearch={value => { setSearch(value); setPage(1); }} from={from} setFrom={value => { setFrom(value); setPage(1); }} to={to} setTo={value => { setTo(value); setPage(1); }} />
     <LoadState loading={state.loading} error={state.error} retry={() => setRevision(value => value + 1)} />
     {state.data && !state.data.items.length && <div className={shared.empty}><Folder size={30} /><h2>{search || from || to ? "No matching items" : "This folder is empty"}</h2><button className={shared.primary} onClick={open}><FolderPlus size={17} />New folder</button></div>}
-    {!!state.data?.items.length && <><div className={styles.desktop}><table className={styles.table}><thead><tr><th>Name</th><th>Type</th><th>Size / Status</th><th>Added on</th><th>Actions</th></tr></thead><tbody>{state.data.items.map(entry => <tr key={entry.id}><td>{entryName(entry)}</td><td>{entry.kind === "folder" ? "Folder" : "File"}</td><td>{entry.kind === "file" ? bytes(entry.size_bytes) : ""}{entry.state === "pending" && <small className={styles.badge}>Import pending</small>}</td><td>{dateTime(entry.created_at)}</td><td>{download(entry)}</td></tr>)}</tbody></table></div><div className={styles.mobile}>{state.data.items.map(entry => <article className={styles.item} key={entry.id}><header>{entryName(entry)}</header><dl>{entry.kind === "file" && <div><dt>Size</dt><dd>{bytes(entry.size_bytes)}</dd></div>}<div><dt>Added on</dt><dd>{dateTime(entry.created_at)}</dd></div>{entry.state === "pending" && <div><dt>Status</dt><dd>Import pending</dd></div>}</dl>{download(entry)}</article>)}</div></>}
+    {!!state.data?.items.length && <><div className={styles.desktop}><table className={styles.table}><thead><tr><th>Name</th><th>Type</th><th>Size / Status</th><th>Added on</th><th>Actions</th></tr></thead><tbody>{state.data.items.map(entry => <tr key={entry.id}><td>{entryName(entry)}</td><td>{entry.kind === "folder" ? "Folder" : "File"}</td><td>{entry.kind === "file" ? bytes(entry.size_bytes) : ""}{entry.state === "pending" && <small className={styles.badge}>Import pending</small>}</td><td>{dateTime(entry.created_at)}</td><td>{actions(entry)}</td></tr>)}</tbody></table></div><div className={styles.mobile}>{state.data.items.map(entry => <article className={styles.item} key={entry.id}><header>{entryName(entry)}</header><dl>{entry.kind === "file" && <div><dt>Size</dt><dd>{bytes(entry.size_bytes)}</dd></div>}<div><dt>Added on</dt><dd>{dateTime(entry.created_at)}</dd></div>{entry.state === "pending" && <div><dt>Status</dt><dd>Import pending</dd></div>}</dl>{actions(entry)}</article>)}</div></>}
     {state.data && <Pagination total={state.data.total} page={page} setPage={setPage} />}
     <dialog ref={dialog} className={shared.dialog} aria-labelledby="root-folder-title" onCancel={event => { if (busy) event.preventDefault(); }}><form onSubmit={save}><header className={shared.dialogHeader}><h2 id="root-folder-title">Create folder</h2><button type="button" className={shared.iconButton} title="Close" aria-label="Close dialog" disabled={busy} onClick={() => dialog.current?.close()}><X size={18} /></button></header><fieldset className={shared.formBody} disabled={busy}><p className={styles.selection}>{folder || "Company root"}</p><label className={shared.field}>Folder name<input required maxLength={255} value={name} onChange={event => setName(event.target.value)} /></label>{error && <p className={shared.formError} role="alert">{error}</p>}</fieldset><footer className={shared.dialogFooter}><button type="button" className={shared.secondary} disabled={busy} onClick={() => dialog.current?.close()}>Cancel</button><button className={shared.primary} disabled={busy}><Save size={16} />{busy ? "Saving..." : "Create"}</button></footer></form></dialog>
+    {versionFile && <RootVersions file={versionFile} close={() => setVersionFile(null)} />}
   </section>;
 }
 

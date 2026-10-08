@@ -48,6 +48,8 @@ class CompanyRootTests(unittest.TestCase):
         paths = app.openapi()['paths']
         self.assertIn('/company/teams/data/root', paths)
         self.assertIn('/company/teams/data/root/files/{identifier}/content', paths)
+        self.assertIn('/company/teams/data/root/files/{identifier}/versions', paths)
+        self.assertIn('/company/teams/data/root/files/{identifier}/versions/{version_id}/content', paths)
         self.assertNotIn('/company/teams/data/root/access', paths)
 
     def test_api_company_scope_and_origin(self):
@@ -81,7 +83,7 @@ class CompanyRootDatabaseTests(unittest.TestCase):
         socket = Path(os.environ['MIKAN_TREE_TEST_SOCKET']).resolve()
         if socket.parent != Path('/tmp').resolve() or not socket.name.startswith('mikan-tree.'):
             raise RuntimeError('Refusing non-scratch database')
-        self.connection = psycopg.connect(host=str(socket), dbname='mikan_root_visibility', row_factory=dict_row)
+        self.connection = psycopg.connect(host=str(socket), dbname=os.environ.get('MIKAN_TREE_TEST_DATABASE', 'mikan_root_visibility'), row_factory=dict_row)
         self.addCleanup(self.connection.close)
         self.transaction = self.connection.transaction(force_rollback=True)
         self.transaction.__enter__()
@@ -172,6 +174,26 @@ class CompanyRootDatabaseTests(unittest.TestCase):
         self.assertEqual(len(second['items']), 2)
         self.assertFalse({item['id'] for item in first['items']} & {item['id'] for item in second['items']})
         self.assertEqual(self.browse('General', to_date='2000-01-01')['total'], 0)
+
+    def test_root_import_version_history_and_download(self):
+        imported = self.connection.execute("""INSERT INTO company_root_entry(company_id,kind,parent,name,source_id,source_modified_at,size_bytes,
+            connection_id,object_key,etag,sha256,uploaded_at) VALUES (%s,'file','General','drawing.pdf',%s,'2000',24,%s,%s,'current',%s,clock_timestamp()) RETURNING *""",
+            (self.company, str(uuid4()), self.storage, str(uuid4()), 'a' * 64)).fetchone()
+        version = self.connection.execute("""INSERT INTO company_root_version(file_id,company_id,source_version_id,version_label,
+            source_modified_at,connection_id,object_key,object_version,etag,sha256,name,size_bytes,state,uploaded_at)
+            VALUES (%s,%s,%s,'1.0','1000',%s,%s,'object-v1','old',%s,'drawing.pdf',12,'ready',clock_timestamp()) RETURNING *""",
+            (imported['id'], self.company, str(uuid4()), self.storage, str(uuid4()), 'b' * 64)).fetchone()
+        response = self.client.get(f"/company/teams/data/root/files/{imported['id']}/versions")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['total'], 2)
+        self.assertTrue(response.json()['items'][0]['current'])
+        self.assertEqual(response.json()['items'][1]['version_label'], '1.0')
+        with patch('company_root.stream_file', return_value=Response('old content')) as stream:
+            response = self.client.get(f"/company/teams/data/root/files/{imported['id']}/versions/{version['id']}/content")
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(stream.call_args.args[0]['object_key'], version['object_key'])
+        self.assertEqual(self.client.get(
+            f"/company/teams/data/root/files/{uuid4()}/versions/{version['id']}/content").status_code, 404)
 
 
 if __name__ == '__main__':

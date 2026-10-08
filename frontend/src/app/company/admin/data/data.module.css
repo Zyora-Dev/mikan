@@ -51,6 +51,13 @@
 .events .detail { color: #3c5144; font-size: 12px; }
 .selection { margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 .selection small { display: block; margin-top: 7px; font-size: 12px; color: #3c5144; }
+.versionBody { display: grid; gap: 16px; padding: 20px 24px; min-width: min(520px, calc(100vw - 48px)); }
+.versions { display: grid; gap: 0; list-style: none; margin: 0; padding: 0; border-block: 1px solid #d4ded7; }
+.versions li { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 4px; border-bottom: 1px solid #d4ded7; }
+.versions li:last-child { border-bottom: 0; }
+.versions strong, .versions small { display: block; overflow-wrap: anywhere; }
+.versions strong { font-size: 13px; }
+.versions small { margin-top: 4px; color: #3c5144; font-size: 12px; }
 .warning { margin: 0; font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
 .retention { display: flex; align-items: end; flex-wrap: wrap; gap: 16px; padding: 0 0 20px; margin-bottom: 20px; border-bottom: 1px solid #ccd7d0; }
 .retentionToggle { display: inline-flex; align-items: center; gap: 10px; min-height: 40px; font-size: 13px; color: #18251f; }

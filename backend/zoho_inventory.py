@@ -80,6 +80,18 @@ class WorkDriveReader:
         self.requests += 1
         return response_json(response)
 
+    def version_preview_info(self, version_id):
+        if not re.fullmatch(r'[A-Za-z0-9]+-[0-9]+', version_id):
+            raise InventoryError('Invalid source version identifier.')
+        if not self.access_token or time.monotonic() >= self.expires_at:
+            self.refresh()
+        response = self.client.get(
+            f'{self.api_domain}/workdrive/api/v1/versions/{version_id}/previewinfo',
+            headers={'Authorization': f'Zoho-oauthtoken {self.access_token}'},
+        )
+        self.requests += 1
+        return response_json(response)
+
 
 def source_roots(reader):
     roots = []

@@ -112,4 +112,35 @@ def create_company_root_router(company_dependency, origin_dependency):
             raise HTTPException(404, 'File not found.')
         return stream_file(record)
 
+    @router.get('/files/{identifier}/versions')
+    def versions(identifier: UUID, connection=Depends(get_db, scope='function'), admin=Depends(company_dependency)):
+        file = connection.execute("""SELECT id,name,size_bytes,source_modified_at,created_at,uploaded_at
+            FROM company_root_entry WHERE id=%s AND company_id=%s AND kind='file' AND state='ready'""",
+            (identifier, admin['company_id'])).fetchone()
+        if not file:
+            raise HTTPException(404, 'File not found.')
+        history = connection.execute("""SELECT id,version_label,name,size_bytes,source_created_at,source_modified_at,
+            created_at,uploaded_at,false AS current FROM company_root_version
+            WHERE file_id=%s AND company_id=%s AND state='ready' ORDER BY source_modified_at DESC NULLS LAST,created_at DESC,id DESC""",
+            (identifier, admin['company_id'])).fetchall()
+        current = {
+            'id': file['id'], 'version_label': 'Current', 'name': file['name'], 'size_bytes': file['size_bytes'],
+            'source_created_at': None, 'source_modified_at': file['source_modified_at'], 'created_at': file['created_at'],
+            'uploaded_at': file['uploaded_at'], 'current': True,
+        }
+        return {'items': [current, *history], 'total': len(history) + 1}
+
+    @router.get('/files/{identifier}/versions/{version_id}/content')
+    def version_content(identifier: UUID, version_id: UUID, connection=Depends(get_db, scope='function'), admin=Depends(company_dependency)):
+        record = connection.execute("""SELECT version.name AS filename,version.size_bytes,version.object_key,
+            version.object_version,version.etag,storage.* FROM company_root_version version
+            JOIN company_root_entry file ON file.id=version.file_id AND file.company_id=version.company_id
+                AND file.kind='file' AND file.state='ready'
+            JOIN storage_connection storage ON storage.id=version.connection_id AND storage.enabled
+            WHERE version.id=%s AND version.file_id=%s AND version.company_id=%s AND version.state='ready'""",
+            (version_id, identifier, admin['company_id'])).fetchone()
+        if not record:
+            raise HTTPException(404, 'Version not found.')
+        return stream_file(record)
+
     return router

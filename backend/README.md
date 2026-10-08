@@ -90,7 +90,9 @@ cd backend
 ## General Import
 
 Deploy the Root visibility/API and frontend release first. Migration025 is
-already applied in production: do not replay it. There is no migration026.
+already applied in production: do not replay it. Migration026 adds immutable
+Company Root history and must be applied once, after a current database backup,
+before running the historical-version importer described below.
 The standalone `zoho_migrate.py` imports General only into
 `Mikan Engineering Pvt Ltd / Company Root / General`, including empty folders
 and exact names. Mikan is excluded. Existing team allocations are not changed.
@@ -120,6 +122,26 @@ objects are never overwritten. On failure, stop and resolve the reported
 cause, then rerun the same command with the same inventory to resume. Do not
 delete pending records or objects. Completion is reported only after final
 source/destination reconciliation; Zoho originals remain unchanged.
+
+The current General transfer omitted one active historical object:
+`VALVE PIT GA DRAWING.pdf` version 1.0 (515,641 bytes, SHA-256
+`9baadfd2c992a70055a83f1af05b8884ef94855b5cec1ad0362418b5c2f0f51d`).
+After deploying the history API/UI and applying only migration026, run the
+single-purpose importer from the backend directory:
+
+```sh
+python zoho_migrate_general_version.py --check-destination
+python zoho_migrate_general_version.py --credentials /private/path/.env.zoho --execute --confirm-company "Mikan Engineering Pvt Ltd" --backup-confirmed
+```
+
+Both commands require `MIKAN_MIGRATION_DATABASE_URL`; there is no fallback to
+the application's `DATABASE_URL`. The first command is read-only. The second is
+restricted to the exact source file/version/name/size/hash above, refuses
+redirected or untrusted download URLs, conditionally creates one destination
+object, performs a full SHA-256 readback, and publishes immutable history only
+after verification. Rerunning verifies and reuses the same record/object. It
+does not overwrite the current version, alter the 5 TB team allocation, or
+modify the Zoho original.
 
 ## WhatsApp
 
@@ -252,10 +274,16 @@ psql -d mikan -v ON_ERROR_STOP=1 -f backend/migrations/021_upload_cancellation.s
 psql -d mikan -v ON_ERROR_STOP=1 -f backend/migrations/022_trash_retention.sql
 psql -d mikan -v ON_ERROR_STOP=1 -f backend/migrations/023_team_profile.sql
 psql -d mikan -v ON_ERROR_STOP=1 -f backend/migrations/024_whatsapp.sql
+psql -d mikan -v ON_ERROR_STOP=1 -f backend/migrations/025_company_root.sql
+psql -d mikan -v ON_ERROR_STOP=1 -f backend/migrations/026_company_root_versions.sql
 ```
 
-All twenty-four migrations are already applied on this development machine. They preserve
-existing accounts; an account without a password hash cannot use password login.
+Apply only migrations that have not already been applied to that installation,
+after backup and review; this repository has no automatic migration ledger.
+Migration025 is already applied in production and must not be replayed.
+Migration026 has been validated on a fresh isolated PostgreSQL schema but is not
+yet applied in production. These migrations preserve existing accounts; an
+account without a password hash cannot use password login.
 
 Start the backend with the **Mikan backend dev** VS Code task, or:
 
