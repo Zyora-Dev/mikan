@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from database import get_db
 from zoho_inventory import InventoryError
-from zoho_migration import MIKAN_ROOT_ID, MigrationDeferred, create_migration_router, current_entry, execute_job, historical_url, historical_versions, inventory_folder, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_folder, transfer_item, try_lock_root, verify_ready_checkpoint
+from zoho_migration import MIKAN_ROOT_ID, MigrationDeferred, create_migration_router, current_entry, exact_source_size, execute_job, historical_url, historical_versions, inventory_folder, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_folder, transfer_item, try_lock_root, verify_ready_checkpoint
 
 
 class Transaction:
@@ -74,6 +74,32 @@ class ZohoMigrationTests(unittest.TestCase):
         self.assertEqual(reader.requests, 2)
         self.assertEqual(reader.client.get.call_args_list[1].kwargs['headers']['Authorization'], 'Zoho-oauthtoken fresh')
 
+    def test_relationship_reports_http_400_with_file_context(self):
+        reader = Mock(access_token='token', api_domain='https://www.zohoapis.in', expires_at=float('inf'), requests=0)
+        reader.client.get.return_value = Mock(status_code=400)
+
+        with self.assertRaisesRegex(InventoryError, 'approvedversions metadata for file file123 returned HTTP 400'):
+            reader_relationship(reader, 'file123', 'approvedversions')
+
+    def test_relationship_distinguishes_invalid_json_and_structured_error(self):
+        reader = Mock(access_token='token', api_domain='https://www.zohoapis.in', expires_at=float('inf'), requests=0)
+        invalid = Mock(status_code=200)
+        invalid.json.side_effect = ValueError
+        structured = Mock(status_code=200)
+        structured.json.return_value = {'errors': [{'id': 'hidden'}]}
+        reader.client.get.side_effect = [invalid, structured]
+
+        with self.assertRaisesRegex(InventoryError, 'invalid JSON'):
+            reader_relationship(reader, 'file123', 'versions')
+        with self.assertRaisesRegex(InventoryError, 'structured API error'):
+            reader_relationship(reader, 'file123', 'versions')
+
+    def test_exact_source_size_accepts_known_exact_numeric_fields(self):
+        self.assertEqual(exact_source_size({'size_in_bytes': '42'}), 42)
+        self.assertEqual(exact_source_size({'file_size': 42.0}), 42)
+        with self.assertRaises(InventoryError):
+            exact_source_size({'size': '42 KB'})
+
     def test_historical_url_falls_back_to_version_download_for_unpreviewable_file(self):
         reader = Mock()
         reader.version_preview_info.return_value = {'data': {'attributes': {
@@ -90,10 +116,10 @@ class ZohoMigrationTests(unittest.TestCase):
         self.assertEqual(url.path, '/v1/workdrive/download/whiteboard123')
         self.assertEqual(url.params['version'], '1.0')
 
-    def test_historical_url_rejects_different_version_selector(self):
+    def test_historical_url_uses_canonical_download_for_variable_preview_url(self):
         reader = Mock()
         reader.version_preview_info.return_value = {'data': {'attributes': {
-            'preview_data_url': 'https://download-accl.zoho.in/v1/workdrive/previewdata/file123?version=999',
+            'preview_data_url': 'https://untrusted.invalid/unstructured?version=999',
             'size': 42,
         }}}
         item = {
@@ -101,13 +127,17 @@ class ZohoMigrationTests(unittest.TestCase):
             'version_label': '1.0', 'size_bytes': 42,
         }
 
-        with self.assertRaises(InventoryError):
-            historical_url(reader, item)
+        url = historical_url(reader, item)
 
-    def test_historical_preview_url_accepts_source_version_identifier(self):
+        self.assertEqual(url.host, 'download-accl.zoho.in')
+        self.assertEqual(url.path, '/v1/workdrive/download/file123')
+        self.assertEqual(url.params['version'], '1.0')
+        reader.version_preview_info.assert_not_called()
+
+    def test_historical_url_does_not_send_provider_preview_query(self):
         reader = Mock()
         reader.version_preview_info.return_value = {'data': {'attributes': {
-            'preview_data_url': 'https://download-accl.zoho.in/v1/workdrive/previewdata/file123?version=456',
+            'preview_data_url': 'https://download-accl.zoho.in/v1/workdrive/previewdata/file123?version=456&token=secret',
             'size': 42,
         }}}
         item = {
@@ -115,7 +145,19 @@ class ZohoMigrationTests(unittest.TestCase):
             'version_label': '1.0', 'size_bytes': 42,
         }
 
-        self.assertEqual(historical_url(reader, item).params['version'], '456')
+        url = historical_url(reader, item)
+
+        self.assertEqual(list(url.params.multi_items()), [('version', '1.0')])
+        reader.version_preview_info.assert_not_called()
+
+    def test_historical_url_rejects_invalid_identity_before_credentials(self):
+        item = {
+            'source_file_id': '../file123', 'source_version_id': 'file123-456',
+            'version_label': '1.0', 'size_bytes': 42,
+        }
+
+        with self.assertRaisesRegex(InventoryError, 'credentials were not sent'):
+            historical_url(Mock(), item)
 
     def test_version_inventory_excludes_current_and_preserves_older_and_approved(self):
         file_item = {'source_id': 'file123', 'source_parent_id': 'folder123', 'source_name': 'Plan.pdf',
@@ -162,6 +204,25 @@ class ZohoMigrationTests(unittest.TestCase):
             historical_versions([{'id': 'file123-2', 'attributes': {
                 'version_number': 2.0, 'file_size': 1,
             }}], [], file_item)
+
+    def test_version_inventory_accepts_alternate_exact_size_field(self):
+        file_item = {'source_id': 'file123', 'source_parent_id': 'folder123', 'source_name': 'Plan.pdf',
+                     'destination_path': 'Mikan/Plans/Plan.pdf', 'size_bytes': 77_479}
+
+        historical, current_id = historical_versions([
+            {'id': 'file123-2', 'attributes': {'version_number': '2.0', 'size_in_bytes': '77479.0'}},
+            {'id': 'file123-1', 'attributes': {'version_number': '1.0', 'storage_info': {'size_in_bytes': 12}}},
+        ], [], file_item)
+
+        self.assertEqual(current_id, 'file123-2')
+        self.assertEqual(historical[0]['size_bytes'], 12)
+
+    def test_version_inventory_reports_missing_active_versions(self):
+        file_item = {'source_id': 'file123', 'source_parent_id': 'folder123', 'source_name': 'Plan.pdf',
+                     'destination_path': 'Mikan/Plans/Plan.pdf', 'size_bytes': 77_479}
+
+        with self.assertRaisesRegex(InventoryError, 'no active version metadata'):
+            historical_versions([], [], file_item)
 
     @patch('zoho_migration.object_head')
     def test_ready_checkpoint_uses_object_identity_without_redownloading_bytes(self, object_head):

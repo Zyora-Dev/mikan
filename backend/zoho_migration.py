@@ -39,21 +39,35 @@ class MigrationStart(BaseModel):
     source_folder_id: str = Field(pattern=r'^[A-Za-z0-9]+$', min_length=1, max_length=200)
 
 
+def exact_nonnegative_integer(*values):
+    for value in values:
+        if isinstance(value, bool) or value is None:
+            continue
+        try:
+            number = Decimal(str(value))
+        except InvalidOperation:
+            continue
+        if number.is_finite() and number >= 0 and number == number.to_integral_value():
+            return int(number)
+    return None
+
+
 def source_size(attributes):
-    value = (attributes.get('storage_info') or {}).get('size_in_bytes', 0)
-    if isinstance(value, int) and value >= 0:
-        return value
-    if isinstance(value, str) and value.isdigit():
-        return int(value)
-    return 0
+    storage = attributes.get('storage_info') or {}
+    return exact_nonnegative_integer(
+        storage.get('size_in_bytes'), attributes.get('size_in_bytes'),
+        attributes.get('file_size'), attributes.get('size'),
+    ) or 0
 
 
 def exact_source_size(attributes):
-    value = (attributes.get('storage_info') or {}).get('size_in_bytes')
-    if isinstance(value, int) and value >= 0:
+    storage = attributes.get('storage_info') or {}
+    value = exact_nonnegative_integer(
+        storage.get('size_in_bytes'), attributes.get('size_in_bytes'),
+        attributes.get('file_size'), attributes.get('size'),
+    )
+    if value is not None:
         return value
-    if isinstance(value, str) and value.isdigit():
-        return int(value)
     raise InventoryError('A source file has no exact byte size.')
 
 
@@ -91,10 +105,20 @@ def reader_relationship(reader, file_id, relationship):
         if response.status_code != 401 or attempt:
             break
         reader.refresh()
-    payload = response.json() if response.status_code == 200 else None
-    records = payload.get('data') if isinstance(payload, dict) else None
+    context = f'Zoho {relationship} metadata for file {file_id}'
+    if response.status_code != 200:
+        raise InventoryError(f'{context} returned HTTP {response.status_code}; migration stopped.')
+    try:
+        payload = response.json()
+    except ValueError:
+        raise InventoryError(f'{context} returned invalid JSON; response content hidden.') from None
+    if not isinstance(payload, dict):
+        raise InventoryError(f'{context} returned an unexpected response shape; content hidden.')
+    if payload.get('error') or payload.get('errors'):
+        raise InventoryError(f'{context} returned a structured API error; content hidden.')
+    records = payload.get('data')
     if not isinstance(records, list):
-        raise InventoryError(f'Zoho {relationship} metadata HTTP {response.status_code}; migration stopped.')
+        raise InventoryError(f'{context} returned an unexpected data shape; content hidden.')
     return records
 
 
@@ -103,10 +127,12 @@ def version_item(record, file_item):
     identifier = record.get('id')
     if not isinstance(attributes, dict) or not isinstance(identifier, str) or not re.fullmatch(r'[A-Za-z0-9-]+', identifier):
         raise InventoryError('Unexpected source version metadata.')
-    size = attributes.get('file_size', attributes.get('size'))
-    if isinstance(size, str) and size.isdigit():
-        size = int(size)
-    if not isinstance(size, int) or size < 0:
+    storage = attributes.get('storage_info') or {}
+    size = exact_nonnegative_integer(
+        attributes.get('file_size'), attributes.get('size_in_bytes'),
+        storage.get('size_in_bytes'), attributes.get('size'),
+    )
+    if size is None:
         raise InventoryError('A source version has no exact byte size.')
     label = attributes.get('version_number')
     if not isinstance(label, (str, int, float)):
@@ -124,6 +150,8 @@ def version_item(record, file_item):
 
 def historical_versions(active_records, approved_records, file_item):
     active = [version_item(record, file_item) for record in active_records]
+    if not active:
+        raise InventoryError('Source file has no active version metadata; current version cannot be reconciled.')
     versions = {item['source_id']: item for item in active}
     for record in approved_records:
         item = version_item(record, file_item)
@@ -439,28 +467,20 @@ def current_entry(item):
     }
 
 
-def historical_url(reader, item):
-    metadata = reader.version_preview_info(item['source_version_id'])
-    attributes = metadata.get('data', {}).get('attributes', {})
-    raw_url = attributes.get('preview_data_url')
-    if not isinstance(raw_url, str):
-        raw_url = str(httpx.URL(
-            f'https://download-accl.zoho.in/v1/workdrive/download/{item["source_file_id"]}'
-        ).copy_add_param('version', item['version_label']))
-    url = httpx.URL(raw_url)
-    allowed_paths = {
-        f"/v1/workdrive/previewdata/{item['source_file_id']}",
-        f"/v1/workdrive/download/{item['source_file_id']}",
-    }
-    expected_version = (item['source_version_id'].rsplit('-', 1)[-1]
-                        if url.path.startswith('/v1/workdrive/previewdata/') else item['version_label'])
+def historical_url(_reader, item):
+    file_id = item['source_file_id']
+    version_label = item['version_label']
+    if (not isinstance(file_id, str) or not re.fullmatch(r'[A-Za-z0-9]+', file_id)
+            or not isinstance(version_label, str) or not re.fullmatch(r'[0-9]+(?:\.[0-9]+)?', version_label)):
+        raise InventoryError('Invalid historical source identity; credentials were not sent.')
+    url = httpx.URL(
+        f'https://download-accl.zoho.in/v1/workdrive/download/{file_id}'
+    ).copy_add_param('version', version_label)
     if (url.scheme != 'https' or url.host != 'download-accl.zoho.in' or url.port not in (None, 443)
-            or url.userinfo or url.fragment or url.path not in allowed_paths
-            or url.params.get('version') != expected_version):
+            or url.userinfo or url.fragment
+            or url.path != f'/v1/workdrive/download/{file_id}'
+            or url.params.get('version') != version_label):
         raise InventoryError('Unverified historical download URL; credentials were not sent.')
-    reported = attributes.get('file_size', attributes.get('size_in_bytes', attributes.get('size')))
-    if reported is not None and str(reported) != str(item['size_bytes']):
-        raise InventoryError('Historical source size changed; migration stopped.')
     return url
 
 
