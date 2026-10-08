@@ -67,30 +67,30 @@ class WorkDriveReader:
         self.api_domain = domain
         self.expires_at = time.monotonic() + 3000
 
-    def get(self, path, params=None):
+    def authorized_get(self, path, params=None):
         if not self.access_token or time.monotonic() >= self.expires_at:
             self.refresh()
+        for attempt in range(2):
+            response = self.client.get(
+                f'{self.api_domain}/workdrive/api/v1{path}',
+                params=params,
+                headers={'Authorization': f'Zoho-oauthtoken {self.access_token}'},
+            )
+            self.requests += 1
+            if response.status_code != 401 or attempt:
+                return response_json(response)
+            self.refresh()
+        raise InventoryError('Zoho authorization retry did not complete.')
+
+    def get(self, path, params=None):
         if not re.fullmatch(r'/(teamfolders|files)/[A-Za-z0-9]+(?:/files)?', path):
             raise InventoryError('Only source metadata and folder listing endpoints are allowed.')
-        response = self.client.get(
-            f'{self.api_domain}/workdrive/api/v1{path}',
-            params=params,
-            headers={'Authorization': f'Zoho-oauthtoken {self.access_token}'},
-        )
-        self.requests += 1
-        return response_json(response)
+        return self.authorized_get(path, params)
 
     def version_preview_info(self, version_id):
         if not re.fullmatch(r'[A-Za-z0-9]+-[0-9]+', version_id):
             raise InventoryError('Invalid source version identifier.')
-        if not self.access_token or time.monotonic() >= self.expires_at:
-            self.refresh()
-        response = self.client.get(
-            f'{self.api_domain}/workdrive/api/v1/versions/{version_id}/previewinfo',
-            headers={'Authorization': f'Zoho-oauthtoken {self.access_token}'},
-        )
-        self.requests += 1
-        return response_json(response)
+        return self.authorized_get(f'/versions/{version_id}/previewinfo')
 
 
 def source_roots(reader):

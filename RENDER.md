@@ -16,8 +16,10 @@ in PostgreSQL. Temporary upload chunks can use ephemeral disk, but concurrency,
 available scratch space and request limits must be tested before launch.
 
 Auto-deploy and preview environments are off. No cloud resources have been
-created. The backend's existing automation worker starts disabled deliberately:
-it can send queued emails/webhooks and permanently clean eligible Trash.
+created. The backend's existing automation worker is enabled in the Blueprint;
+it can run migration jobs, send queued emails/webhooks and permanently clean
+eligible Trash. Review queued work and retention policy before every approved
+manual backend deployment.
 
 ## Before Creating Services
 
@@ -107,10 +109,9 @@ python create_super_admin.py --email "admin@example.com" --name "Administrator"
 ```
 
 After confirming the schema, integration settings and intended queued work,
-change `MIKAN_AUTOMATION_ENABLED` to `'true'` in `render.yaml` and sync/redeploy
-the backend. Until then, queued sharing emails, scheduled automation and Trash
-cleanup do not run. Keep one backend instance/worker initially. Review worker
-coordination and overlapping-deploy behaviour before scaling.
+verify `MIKAN_AUTOMATION_ENABLED` is `'true'` in `render.yaml`, then sync and
+manually deploy the backend. Keep one backend instance/worker initially. Review
+worker coordination and overlapping-deploy behaviour before scaling.
 
 ## Launch Checks
 

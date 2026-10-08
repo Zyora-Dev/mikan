@@ -5,6 +5,7 @@ import re
 import shutil
 import tempfile
 import time
+from decimal import Decimal, InvalidOperation
 from uuid import UUID, uuid4
 
 import httpx
@@ -117,6 +118,27 @@ def version_item(record, file_item):
     }
 
 
+def historical_versions(active_records, approved_records, file_item):
+    active = [version_item(record, file_item) for record in active_records]
+    versions = {item['source_id']: item for item in active}
+    for record in approved_records:
+        item = version_item(record, file_item)
+        previous = versions.get(item['source_id'])
+        if previous and (previous['size_bytes'], previous['version_label']) != (item['size_bytes'], item['version_label']):
+            raise InventoryError('Conflicting source version metadata.')
+        versions[item['source_id']] = item
+    try:
+        numbered = [(item, Decimal(item['version_label'])) for item in active]
+        highest = max(number for _item, number in numbered)
+    except (InvalidOperation, ValueError):
+        raise InventoryError('Active source versions have non-numeric labels; current version cannot be reconciled.') from None
+    current = [item for item, number in numbered if number == highest]
+    if len(current) != 1 or current[0]['size_bytes'] != file_item['size_bytes']:
+        raise InventoryError('Current source version does not reconcile with the current file.')
+    versions.pop(current[0]['source_id'])
+    return list(versions.values()), current[0]['source_id']
+
+
 def inventory_folder(reader, source_id, root_name):
     items = []
     seen = set()
@@ -161,15 +183,12 @@ def inventory_folder(reader, source_id, root_name):
                 'source_metadata': child_attributes,
             }
             items.append(file_item)
-            versions = {}
-            for relationship in ('versions', 'approvedversions'):
-                for version in reader_relationship(reader, child_id, relationship):
-                    parsed = version_item(version, file_item)
-                    previous = versions.get(parsed['source_id'])
-                    if previous and (previous['size_bytes'], previous['version_label']) != (parsed['size_bytes'], parsed['version_label']):
-                        raise InventoryError('Conflicting source version metadata.')
-                    versions[parsed['source_id']] = parsed
-            items.extend(versions.values())
+            historical, current_version_id = historical_versions(
+                reader_relationship(reader, child_id, 'versions'),
+                reader_relationship(reader, child_id, 'approvedversions'), file_item,
+            )
+            file_item['source_metadata']['current_version_id'] = current_version_id
+            items.extend(historical)
     visit(source_id, MIKAN_ROOT_ID, DESTINATION_ROOT, root_name)
     if len({(item['kind'], item['source_id']) for item in items}) != len(items):
         raise InventoryError('Repeated source item detected during inventory.')
@@ -235,6 +254,40 @@ def repair_legacy_destination(connection, job, items):
         connection.execute('UPDATE zoho_migration_job SET destination_path=%s,updated_at=clock_timestamp() WHERE id=%s',
                            (new_root, job['id']))
     return [{**item, 'destination_path': f"{DESTINATION_ROOT}/{item['destination_path']}"} for item in items]
+
+
+def prune_unstarted_current_version_duplicates(connection, reader, job, items):
+    retained = list(items)
+    for file_item in (item for item in items if item['kind'] == 'file'):
+        versions = [item for item in items if item['kind'] == 'version' and item['source_file_id'] == file_item['source_id']]
+        if not versions:
+            continue
+        _historical, current_version_id = historical_versions(
+            reader_relationship(reader, file_item['source_id'], 'versions'),
+            reader_relationship(reader, file_item['source_id'], 'approvedversions'), file_item,
+        )
+        candidates = [item for item in versions if item['source_version_id'] == current_version_id]
+        if len(candidates) != 1:
+            continue
+        candidate = candidates[0]
+        with connection.transaction():
+            if candidate['destination_version_id']:
+                deleted = connection.execute("""DELETE FROM company_root_version
+                    WHERE id=%s AND company_id=%s AND state='pending' AND sha256 IS NULL RETURNING id""",
+                    (candidate['destination_version_id'], job['company_id'])).fetchone()
+                if not deleted:
+                    continue
+            deleted = connection.execute("""DELETE FROM zoho_migration_item
+                WHERE id=%s AND job_id=%s AND state='pending' AND sha256 IS NULL RETURNING id""",
+                (candidate['id'], job['id'])).fetchone()
+            if not deleted:
+                raise MigrationJobError('Current-version duplicate checkpoint changed during reconciliation.')
+            retained.remove(candidate)
+            connection.execute('''UPDATE zoho_migration_job SET versions_total=%s,bytes_total=%s,updated_at=clock_timestamp()
+                WHERE id=%s''', (
+                    sum(item['kind'] == 'version' for item in retained),
+                    sum(item['size_bytes'] for item in retained if item['kind'] in ('file', 'version')), job['id']))
+    return retained
 
 
 def destination_storage(connection, company_id):
@@ -406,6 +459,17 @@ def download_historical(reader, item, output):
     return digest.hexdigest()
 
 
+def verify_ready_checkpoint(client, storage, record, digest):
+    if record['state'] != 'ready' or record['sha256'] != digest or not record['etag']:
+        raise InventoryError('Verified destination checkpoint is incomplete.')
+    head = object_head(client, storage, record)
+    if not head or head['ContentLength'] != record['size_bytes'] or head['ETag'] != record['etag']:
+        raise InventoryError('Verified destination object identity or size changed.')
+    if record.get('object_version') and head.get('VersionId') != record['object_version']:
+        raise InventoryError('Verified destination object version changed.')
+    return head
+
+
 def transfer_item(connection, reader, client, storage, job, item):
     table = 'company_root_entry' if item['kind'] == 'file' else 'company_root_version'
     identifier = item['destination_entry_id'] if item['kind'] == 'file' else item['destination_version_id']
@@ -414,28 +478,30 @@ def transfer_item(connection, reader, client, storage, job, item):
     if not record:
         raise InventoryError('Reserved destination record is missing.')
     if record['state'] == 'ready':
-        verify_object(client, storage, record, record['sha256'])
+        verify_ready_checkpoint(client, storage, record, record['sha256'])
         digest = record['sha256']
     else:
-        if shutil.disk_usage(tempfile.gettempdir()).free < item['size_bytes'] + 128 * 1024 * 1024:
-            raise InventoryError('Insufficient temporary disk space for the next item.')
-        with tempfile.TemporaryFile() as output:
-            digest = download_source(reader, current_entry(item), output) if item['kind'] == 'file' else download_historical(reader, item, output)
-            with connection.transaction():
-                bound = connection.execute(
-                    f"UPDATE {table} SET sha256=%s WHERE id=%s AND company_id=%s AND state='pending' AND (sha256 IS NULL OR sha256=%s) RETURNING id",
-                    (digest, identifier, job['company_id'], digest),
-                ).fetchone()
-                if not bound:
-                    raise InventoryError('Pending destination identity or state changed; nothing overwritten.')
-            if object_head(client, storage, record) is None:
+        digest = record['sha256']
+        head = verify_object(client, storage, record, digest) if digest and object_head(client, storage, record) else None
+        if head is None:
+            if shutil.disk_usage(tempfile.gettempdir()).free < item['size_bytes'] + 128 * 1024 * 1024:
+                raise InventoryError('Insufficient temporary disk space for the next item.')
+            with tempfile.TemporaryFile() as output:
+                digest = download_source(reader, current_entry(item), output) if item['kind'] == 'file' else download_historical(reader, item, output)
+                with connection.transaction():
+                    bound = connection.execute(
+                        f"UPDATE {table} SET sha256=%s WHERE id=%s AND company_id=%s AND state='pending' AND (sha256 IS NULL OR sha256=%s) RETURNING id",
+                        (digest, identifier, job['company_id'], digest),
+                    ).fetchone()
+                    if not bound:
+                        raise InventoryError('Pending destination identity or state changed; nothing overwritten.')
                 metadata = {'sha256': digest, 'zoho-source-id': item['source_file_id']}
                 if item['kind'] == 'version':
                     metadata['zoho-source-version-id'] = item['source_version_id']
                 client.put_object(Bucket=storage['bucket'], Key=record['object_key'], Body=output,
                     ContentLength=item['size_bytes'], ContentType='application/octet-stream', IfNoneMatch='*', Metadata=metadata)
-            record['sha256'] = digest
-            head = verify_object(client, storage, record, digest)
+                record['sha256'] = digest
+                head = verify_object(client, storage, record, digest)
         with connection.transaction():
             published = connection.execute(
                 f"UPDATE {table} SET state='ready',etag=%s,object_version=%s,uploaded_at=clock_timestamp() WHERE id=%s AND company_id=%s AND state='pending' AND sha256=%s RETURNING id",
@@ -489,6 +555,7 @@ def execute_job(connection, job):
                 (job['id'],)).fetchall()
         items = repair_legacy_destination(connection, job, items)
         job = {**job, 'destination_path': f"{DESTINATION_ROOT}/{job['source_folder_name']}"}
+        items = prune_unstarted_current_version_duplicates(connection, reader, job, items)
         storage = reserve_items(connection, job, items)
         items = connection.execute('SELECT * FROM zoho_migration_item WHERE job_id=%s ORDER BY destination_path,kind,source_id',
             (job['id'],)).fetchall()
@@ -514,7 +581,7 @@ def execute_job(connection, job):
                         (identifier, job['company_id'])).fetchone()
                     if not record:
                         raise InventoryError('Final destination record is missing.')
-                    verify_object(client, storage, record, item['sha256'])
+                    verify_ready_checkpoint(client, storage, record, item['sha256'])
             with connection.transaction():
                 connection.execute("""UPDATE zoho_migration_job SET status='complete',phase='Complete',last_error=NULL,
                     completed_at=clock_timestamp(),updated_at=clock_timestamp() WHERE id=%s""", (job['id'],))
@@ -554,16 +621,22 @@ def create_migration_router(company_dependency, origin_dependency):
 
     @router.get('')
     def migration_folders(admin=Depends(company_dependency), connection=Depends(get_db)):
-        try:
-            folders = list_source_folders()
-        except (InventoryError, httpx.HTTPError, OSError, ValueError) as error:
-            raise HTTPException(503, 'Zoho folders are temporarily unavailable.') from error
         jobs = connection.execute(
             f'SELECT {JOB_COLUMNS} FROM zoho_migration_job WHERE company_id=%s AND source_root_id=%s',
             (admin['company_id'], MIKAN_ROOT_ID),
         ).fetchall()
         by_source = {row['source_folder_id']: job_dict(row) for row in jobs}
-        return {'items': [{**folder, 'job': by_source.get(folder['source_folder_id'])} for folder in folders]}
+        try:
+            folders = list_source_folders()
+        except (InventoryError, httpx.HTTPError, OSError, ValueError) as error:
+            if not jobs:
+                raise HTTPException(503, 'Zoho folders are temporarily unavailable.') from error
+            return {'items': [{
+                'source_folder_id': row['source_folder_id'], 'name': row['source_folder_name'],
+                'size_bytes': row['bytes_total'], 'job': job_dict(row),
+            } for row in jobs], 'source_unavailable': True}
+        return {'items': [{**folder, 'job': by_source.get(folder['source_folder_id'])} for folder in folders],
+                'source_unavailable': False}
 
     @router.post('/jobs', status_code=202, dependencies=[Depends(origin_dependency)])
     def start_migration(payload: MigrationStart, admin=Depends(company_dependency), connection=Depends(get_db)):

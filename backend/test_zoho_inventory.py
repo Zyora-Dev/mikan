@@ -33,6 +33,31 @@ class WorkDriveReaderTests(unittest.TestCase):
         self.assertEqual(len(calls), 3)
         self.assertEqual(reader.requests, 2)
 
+    def test_metadata_and_preview_refresh_once_after_unauthorized_token(self):
+        for request_method in (
+            lambda reader: reader.get('/files/abc/files'),
+            lambda reader: reader.version_preview_info('abc-123'),
+        ):
+            tokens = []
+            responses = iter((
+                httpx.Response(200, json={'access_token': 'expired', 'api_domain': 'https://www.zohoapis.in'}),
+                httpx.Response(401),
+                httpx.Response(200, json={'access_token': 'fresh', 'api_domain': 'https://www.zohoapis.in'}),
+                httpx.Response(200, json={'data': []}),
+            ))
+
+            def handler(request):
+                if request.url.host == 'www.zohoapis.in':
+                    tokens.append(request.headers['authorization'])
+                return next(responses)
+
+            credentials = {'ZOHO_CLIENT_ID': 'fake-id', 'ZOHO_CLIENT_SECRET': 'fake-secret', 'ZOHO_REFRESH_TOKEN': 'fake-refresh'}
+            with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+                reader = WorkDriveReader(client, credentials)
+                self.assertEqual(request_method(reader), {'data': []})
+            self.assertEqual(tokens, ['Zoho-oauthtoken expired', 'Zoho-oauthtoken fresh'])
+            self.assertEqual(reader.requests, 2)
+
     def test_untrusted_domain_rejected_before_sending_token(self):
         calls = []
         def handler(request):

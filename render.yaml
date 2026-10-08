@@ -41,7 +41,7 @@ services:
       - key: ZOHO_ACCOUNTS_URL
         value: 'https://accounts.zoho.in'
       - key: MIKAN_AUTOMATION_ENABLED
-        value: 'false'
+        value: 'true'
   - type: web
     name: mikan-web
     runtime: node
