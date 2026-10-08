@@ -622,6 +622,11 @@ def process_migrations():
             execute_job(connection, job)
         except MigrationDeferred as error:
             LOGGER.info('Zoho migration job %s deferred: %s', job['id'], error)
+        except HTTPException as error:
+            detail = error.detail if isinstance(error.detail, str) else 'Migration stopped by destination validation.'
+            LOGGER.warning('Zoho migration job %s stopped (HTTP %s): %s', job['id'], error.status_code, detail)
+            connection.execute("""UPDATE zoho_migration_job SET status='failed',phase='Stopped',last_error=%s,
+                updated_at=clock_timestamp() WHERE id=%s""", (detail, job['id']))
         except (InventoryError, httpx.HTTPError, OSError, ValueError, BotoCoreError, ClientError) as error:
             detail = str(error) if isinstance(error, InventoryError) else 'Migration interrupted by a provider or storage error. Retry resumes verified items.'
             LOGGER.warning('Zoho migration job %s failed (%s)', job['id'], type(error).__name__)

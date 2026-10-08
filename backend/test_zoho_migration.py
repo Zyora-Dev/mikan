@@ -384,6 +384,31 @@ class ZohoMigrationTests(unittest.TestCase):
         self.assertIn("status IN ('queued','inventory','transferring','verifying')", query)
         self.assertNotIn("'failed'", query)
 
+    @patch('zoho_migration.execute_job', side_effect=HTTPException(404, 'Parent folder not found.'))
+    @patch('zoho_migration.connect')
+    def test_worker_records_api_validation_failure_once(self, connect, _execute_job):
+        job = {'id': uuid4(), 'company_id': 7, 'source_folder_id': 'folder1'}
+        connection = Mock()
+        connection.__enter__ = Mock(return_value=connection)
+        connection.__exit__ = Mock(return_value=False)
+
+        def execute(query, *_args):
+            result = Mock()
+            if 'FROM zoho_migration_job' in query:
+                result.fetchone.return_value = job
+            elif 'pg_try_advisory_lock' in query:
+                result.fetchone.return_value = {'acquired': True}
+            return result
+
+        connection.execute.side_effect = execute
+        connect.return_value = connection
+
+        process_migrations()
+
+        failed = next(call for call in connection.execute.call_args_list
+                      if "status='failed'" in call.args[0])
+        self.assertEqual(failed.args[1], ('Parent folder not found.', job['id']))
+
     @patch('zoho_migration.migration_credentials', return_value={})
     @patch('zoho_migration.WorkDriveReader')
     @patch('zoho_migration.storage_client')
