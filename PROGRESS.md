@@ -1,5 +1,10 @@
 # Mikan Progress
 
+## Whiteboards Migration Reservation Fix - 2026-10-08 (Local)
+- Production Whiteboards inventory completed (1 folder, 1 file, 1 version, 24.0 KB) but stopped before byte transfer with `Reserved destination record is missing.` Root cause: the worker persisted destination entry/version IDs during reservation and then transferred using the stale pre-reservation item rows, whose destination IDs were still null.
+- Reload migration item checkpoints immediately after reservation so current-file and version transfers use the persisted destination IDs. Existing failed jobs remain resumable and collision-protected; retry reconciles their durable inventory/reservations without duplicating destination records.
+- PASS the exact stale-reservation regression, all eight reusable migration tests, Python compilation, and changed-file diagnostics. Backend-only release remains uncommitted, unpushed and undeployed; Whiteboards remains failed until the fixed API is deployed and the existing job is retried. Zoho source was not changed.
+
 ## Company Empty Trash - 2026-10-08 (Local)
 - Added an origin-protected, company-scoped `POST /company/teams/data/trash/empty` operation. It atomically queues only the authenticated company's current `trashed` files as `purging`, clears stale retry errors/timers, audits the requested count, and is idempotent for files already queued. The HTTP request performs no provider deletion and does not release quota; the established Trash worker remains solely responsible for verified all-version cleanup, retry handling, metadata state and quota release.
 - Added Data Administration > Trash `Empty Trash` with an explicit irreversible-action dialog, permanent file/version removal and delayed quota-release wording, exact proxy allowlisting, queued-count feedback, and immediate list refresh so queued rows show `Cleaning`.

@@ -441,6 +441,8 @@ def execute_job(connection, job):
             items = connection.execute('SELECT * FROM zoho_migration_item WHERE job_id=%s ORDER BY destination_path,kind,source_id',
                 (job['id'],)).fetchall()
         storage = reserve_items(connection, job, items)
+        items = connection.execute('SELECT * FROM zoho_migration_item WHERE job_id=%s ORDER BY destination_path,kind,source_id',
+            (job['id'],)).fetchall()
         folders = [item for item in items if item['kind'] == 'folder']
         connection.execute("UPDATE zoho_migration_job SET folders_complete=%s,updated_at=clock_timestamp() WHERE id=%s", (len(folders), job['id']))
         client = storage_client(storage)

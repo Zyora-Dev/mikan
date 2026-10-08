@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from database import get_db
-from zoho_migration import MIKAN_ROOT_ID, create_migration_router, current_entry, process_migrations, reader_relationship, source_folder
+from zoho_migration import MIKAN_ROOT_ID, create_migration_router, current_entry, execute_job, process_migrations, reader_relationship, source_folder
 
 
 class Transaction:
@@ -111,6 +111,39 @@ class ZohoMigrationTests(unittest.TestCase):
         query = connection.execute.call_args_list[0].args[0]
         self.assertIn("status IN ('queued','inventory','transferring','verifying')", query)
         self.assertNotIn("'failed'", query)
+
+    @patch('zoho_migration.migration_credentials', return_value={})
+    @patch('zoho_migration.WorkDriveReader')
+    @patch('zoho_migration.storage_client')
+    @patch('zoho_migration.transfer_item')
+    @patch('zoho_migration.reserve_items')
+    def test_execute_job_reloads_reserved_destination_ids(self, reserve, transfer, storage_client, _reader, _credentials):
+        stale = {'id': 1, 'kind': 'file', 'destination_path': 'Whiteboards/board.png',
+                 'source_id': 'file1', 'destination_entry_id': None, 'state': 'pending', 'size_bytes': 42}
+        refreshed = {**stale, 'destination_entry_id': uuid4()}
+        connection = Mock()
+        connection.transaction.return_value = Transaction()
+        item_reads = iter(([stale], [refreshed], [{**refreshed, 'state': 'ready', 'sha256': 'digest'}]))
+
+        def execute(query, *_args):
+            result = Mock()
+            if query.startswith('SELECT * FROM zoho_migration_item'):
+                result.fetchall.return_value = next(item_reads)
+            elif query.startswith('SELECT * FROM company_root_entry'):
+                result.fetchone.return_value = {'id': refreshed['destination_entry_id']}
+            return result
+
+        connection.execute.side_effect = execute
+        reserve.return_value = {'bucket': 'bucket'}
+        client = Mock()
+        storage_client.return_value = client
+        job = {'id': uuid4(), 'company_id': 7, 'source_folder_id': 'folder1',
+               'source_folder_name': 'Whiteboards', 'destination_path': 'Whiteboards'}
+
+        with patch('zoho_migration.verify_object'):
+            execute_job(connection, job)
+
+        self.assertEqual(transfer.call_args.args[-1]['destination_entry_id'], refreshed['destination_entry_id'])
 
 
 if __name__ == '__main__':
