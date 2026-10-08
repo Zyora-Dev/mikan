@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from database import get_db
 from zoho_inventory import InventoryError
-from zoho_migration import MIKAN_ROOT_ID, create_migration_router, current_entry, execute_job, historical_url, historical_versions, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, source_folder, transfer_item, verify_ready_checkpoint
+from zoho_migration import MIKAN_ROOT_ID, MigrationDeferred, create_migration_router, current_entry, execute_job, historical_url, historical_versions, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, source_folder, transfer_item, try_lock_root, verify_ready_checkpoint
 
 
 class Transaction:
@@ -19,6 +19,17 @@ class Transaction:
 
 
 class ZohoMigrationTests(unittest.TestCase):
+    def test_company_root_lock_contention_defers_without_waiting(self):
+        connection = Mock()
+        connection.execute.return_value.fetchone.return_value = {'acquired': False}
+
+        with self.assertRaises(MigrationDeferred):
+            try_lock_root(connection, 7)
+
+        query, values = connection.execute.call_args.args
+        self.assertIn('pg_try_advisory_xact_lock', query)
+        self.assertEqual(values, ('company-root:7',))
+
     def test_source_folder_preserves_identity_name_and_bytes(self):
         folder = source_folder({'id': 'folder123', 'attributes': {
             'name': '6. Lesson Learned', 'is_folder': True, 'storage_info': {'size_in_bytes': '421752'},
@@ -342,7 +353,10 @@ class ZohoMigrationTests(unittest.TestCase):
 
         def execute(query, *_args):
             result = Mock()
-            result.fetchone.return_value = {'id': uuid4()} if 'kind=\'folder\'' in query else None
+            if 'pg_try_advisory_xact_lock' in query:
+                result.fetchone.return_value = {'acquired': True}
+            else:
+                result.fetchone.return_value = {'id': uuid4()} if 'kind=\'folder\'' in query else None
             return result
 
         connection.execute.side_effect = execute
@@ -385,7 +399,9 @@ class ZohoMigrationTests(unittest.TestCase):
 
         def execute(query, *_args):
             result = Mock()
-            if query.startswith('SELECT * FROM zoho_migration_item'):
+            if 'pg_try_advisory_xact_lock' in query:
+                result.fetchone.return_value = {'acquired': True}
+            elif query.startswith('SELECT * FROM zoho_migration_item'):
                 result.fetchall.return_value = next(item_reads)
             elif query.startswith('SELECT * FROM company_root_entry'):
                 result.fetchone.return_value = {

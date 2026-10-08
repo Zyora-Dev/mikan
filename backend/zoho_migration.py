@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field
 
-from company_root import RootFolderInput, create_root_folder, lock_root
+from company_root import RootFolderInput, create_root_folder
 from database import connect, get_db
 from uploads import storage_client
 from zoho_inventory import InventoryError, WorkDriveReader, children
@@ -28,6 +28,10 @@ JOB_COLUMNS = '''id,source_folder_id,source_folder_name,destination_path,status,
     folders_total,folders_complete,files_total,files_complete,versions_total,versions_complete,
     bytes_total,bytes_complete,attempts,last_error,created_at,started_at,completed_at,updated_at'''
 LOGGER = logging.getLogger(__name__)
+
+
+class MigrationDeferred(Exception):
+    pass
 
 
 class MigrationStart(BaseModel):
@@ -218,6 +222,15 @@ def select_job(connection, company_id, source_folder_id):
     ).fetchone()
 
 
+def try_lock_root(connection, company_id):
+    acquired = connection.execute(
+        'SELECT pg_try_advisory_xact_lock(hashtextextended(%s,0)) AS acquired',
+        (f'company-root:{company_id}',),
+    ).fetchone()['acquired']
+    if not acquired:
+        raise MigrationDeferred('Company Root is busy; migration will retry automatically.')
+
+
 def repair_legacy_destination(connection, job, items):
     old_root = job['source_folder_name']
     new_root = f'{DESTINATION_ROOT}/{old_root}'
@@ -230,7 +243,7 @@ def repair_legacy_destination(connection, job, items):
     if any(len(f'{DESTINATION_ROOT}/{item["destination_path"]}') > 255 for item in items):
         raise InventoryError('Correct Mikan destination exceeds the path limit; nothing moved.')
     with connection.transaction():
-        lock_root(connection, job['company_id'])
+        try_lock_root(connection, job['company_id'])
         if not connection.execute(
                 "SELECT id FROM company_root_entry WHERE company_id=%s AND kind='folder' AND path=%s",
                 (job['company_id'], DESTINATION_ROOT)).fetchone():
@@ -281,7 +294,7 @@ def prune_unstarted_current_version_duplicates(connection, reader, job, items):
                 WHERE id=%s AND job_id=%s AND state='pending' AND sha256 IS NULL RETURNING id""",
                 (candidate['id'], job['id'])).fetchone()
             if not deleted:
-                raise MigrationJobError('Current-version duplicate checkpoint changed during reconciliation.')
+                raise InventoryError('Current-version duplicate checkpoint changed during reconciliation.')
             retained.remove(candidate)
             connection.execute('''UPDATE zoho_migration_job SET versions_total=%s,bytes_total=%s,updated_at=clock_timestamp()
                 WHERE id=%s''', (
@@ -303,7 +316,7 @@ def reserve_items(connection, job, items):
     from insights import COMPANY_STORAGE_CAPACITY_BYTES
 
     with connection.transaction():
-        lock_root(connection, job['company_id'])
+        try_lock_root(connection, job['company_id'])
         storage = destination_storage(connection, job['company_id'])
         files = [item for item in items if item['kind'] == 'file']
         versions = [item for item in items if item['kind'] == 'version']
@@ -607,6 +620,8 @@ def process_migrations():
             return
         try:
             execute_job(connection, job)
+        except MigrationDeferred as error:
+            LOGGER.info('Zoho migration job %s deferred: %s', job['id'], error)
         except (InventoryError, httpx.HTTPError, OSError, ValueError, BotoCoreError, ClientError) as error:
             detail = str(error) if isinstance(error, InventoryError) else 'Migration interrupted by a provider or storage error. Retry resumes verified items.'
             LOGGER.warning('Zoho migration job %s failed (%s)', job['id'], type(error).__name__)

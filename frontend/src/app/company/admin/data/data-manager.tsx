@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRightLeft, ChevronRight, Download, File, Folder, FolderPlus, History, Pencil, RefreshCw, RotateCcw, Save, Trash2, X } from "lucide-react";
+import { AlertTriangle, ArrowRightLeft, ChevronRight, Download, File, Folder, FolderPlus, History, Pencil, RefreshCw, RotateCcw, Save, Trash2, X } from "lucide-react";
 import { teamRequest, TeamRequestError } from "@/lib/team-client";
 import { dateTime, Filters, LoadState, Pagination, useResource } from "../workflows/workflow-ui";
 import shared from "../../../admin/companies/companies.module.css";
@@ -18,6 +18,7 @@ type Person = { id: number; name: string; team_id: number; team_name: string; em
 type View = "files" | "folders" | "trash" | "activity";
 type MigrationJob = { id: string; status: "queued" | "inventory" | "transferring" | "verifying" | "complete" | "failed"; phase: string; folders_total: number; folders_complete: number; files_total: number; files_complete: number; versions_total: number; versions_complete: number; bytes_total: number; bytes_complete: number; attempts: number; last_error: string | null; updated_at: string };
 type MigrationFolder = { source_folder_id: string; name: string; size_bytes: number; job: MigrationJob | null };
+type MigrationData = { items: MigrationFolder[]; source_unavailable: boolean };
 type RootRow = { id: string; name: string; path: string; kind: "folder" | "file"; size_bytes: number; state: "pending" | "ready"; created_at: string };
 type RootVersion = { id: string; version_label: string; name: string; size_bytes: number; source_modified_at: string | null; uploaded_at: string | null; current: boolean };
 type Edit = { kind: "file"; action: "edit" | "trash" | "restore"; file: FileRow } | { kind: "folder"; action: "create" | "rename" | "remove"; folder?: FolderRow };
@@ -105,7 +106,7 @@ function MigrationManager() {
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
-  const state = useResource<{ items: MigrationFolder[] }>(`${base}/migration`, true, revision);
+  const state = useResource<MigrationData>(`${base}/migration`, true, revision);
   const active = state.data?.items.some(folder => folder.job && !["complete", "failed"].includes(folder.job.status));
   useEffect(() => {
     if (!active) return;
@@ -145,11 +146,12 @@ function MigrationManager() {
     {notice && <p className={shared.notice} role="status">{notice}</p>}
     {error && <p className={shared.formError} role="alert">{error}</p>}
     <LoadState loading={state.loading} error={state.error} retry={() => setRevision(value => value + 1)} />
+    {state.data?.source_unavailable && <div className={styles.sourceWarning} role="status"><AlertTriangle size={19} /><div><strong>Zoho folder listing is temporarily unavailable</strong><p>Only folders with an existing migration job are shown. Their saved progress is preserved; refresh when Zoho is available to restore the complete folder list.</p></div></div>}
     {state.data && !state.data.items.length && <div className={shared.empty}><Folder size={30} /><h2>No folders found in Zoho Mikan</h2></div>}
     {!!state.data?.items.length && <div className={styles.migrationList}>{state.data.items.map(folder => {
       const job = folder.job; const percent = job ? progress(job) : 0;
       return <article className={styles.migrationItem} key={folder.source_folder_id}>
-        <div className={styles.migrationMain}><span className={styles.migrationIcon}><Folder size={20} /></span><div><h2>{folder.name}</h2><p>{job ? details(job) : folder.size_bytes ? `${bytes(folder.size_bytes)} in Zoho` : "Ready to migrate"}</p></div></div>
+        <div className={styles.migrationMain}><span className={styles.migrationIcon}><Folder size={20} /></span><div><h2>{folder.name}</h2><p>{job ? details(job) : folder.size_bytes ? `${bytes(folder.size_bytes)} in Zoho` : "Ready to migrate"}</p>{job && <small>Attempt {job.attempts} / Updated {dateTime(job.updated_at)}</small>}</div></div>
         {job && <div className={styles.progress} aria-label={`${folder.name} migration ${percent}%`}><span style={{ width: `${percent}%` }} /></div>}
         <div className={styles.migrationStatus}><span className={styles.badge} data-state={job?.status || "ready"}>{job ? job.status : "Not migrated"}</span>{action(folder)}</div>
         {job?.last_error && <p className={styles.migrationError} role="status">{job.last_error}</p>}
