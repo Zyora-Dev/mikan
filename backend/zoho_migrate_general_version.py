@@ -172,6 +172,14 @@ def main(argv=None):
     try:
         if args.execute and (args.confirm_company != COMPANY_NAME or not args.backup_confirmed):
             raise InventoryError('Execution requires --confirm-company "Mikan Engineering Pvt Ltd" and --backup-confirmed.')
+        credentials = None
+        if args.execute:
+            try:
+                credentials, _ = load_credentials(args.credentials, require_refresh=True)
+            except FileNotFoundError:
+                raise AuthorizationError(
+                    f'Zoho credentials file is missing: {args.credentials}. Render redeploys remove this temporary file; recreate it with mode 600 before executing.'
+                ) from None
         dsn = migration_dsn()
         with psycopg.connect(dsn, sslmode='require', connect_timeout=10, autocommit=True, row_factory=dict_row) as connection:
             with connection.transaction():
@@ -183,7 +191,6 @@ def main(argv=None):
             if not args.execute:
                 print('Read-only destination check. No source downloaded and no destination changed.', flush=True)
                 return 0
-            credentials, _ = load_credentials(args.credentials, require_refresh=True)
             with httpx.Client(timeout=120, follow_redirects=False, trust_env=False) as client:
                 migrate(connection, WorkDriveReader(client, credentials))
         return 0

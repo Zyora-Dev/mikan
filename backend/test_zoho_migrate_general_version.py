@@ -1,12 +1,15 @@
 import hashlib
 import io
 import os
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
 import httpx
 
 import test_company_root
+import zoho_migrate_general_version as migration
 from zoho_inventory import InventoryError, WorkDriveReader
 from zoho_migrate_general_version import (
     SOURCE_FILE_ID, SOURCE_VERSION_ID, VERSION_SHA256, VERSION_SIZE,
@@ -23,6 +26,20 @@ def exact_pdf():
 
 
 class HistoricalVersionSourceTests(unittest.TestCase):
+    def test_execute_rejects_missing_credentials_before_database_access(self):
+        with tempfile.TemporaryDirectory() as directory:
+            missing = Path(directory) / '.env.zoho'
+            output = io.StringIO()
+            with patch('sys.stdout', output), patch.object(migration, 'migration_dsn') as migration_dsn:
+                result = migration.main([
+                    '--execute', '--confirm-company', 'Mikan Engineering Pvt Ltd', '--backup-confirmed',
+                    '--credentials', str(missing),
+                ])
+        self.assertEqual(result, 1)
+        migration_dsn.assert_not_called()
+        self.assertIn(f'Zoho credentials file is missing: {missing}', output.getvalue())
+        self.assertIn('Render redeploys remove this temporary file', output.getvalue())
+
     def reader(self, content=None, status=200, download_url=None, attributes=None):
         content = exact_pdf() if content is None else content
         download_url = download_url or f'https://download-accl.zoho.in/v1/workdrive/previewdata/{SOURCE_FILE_ID}?version=4017837000024806802'
