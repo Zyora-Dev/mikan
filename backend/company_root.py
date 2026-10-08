@@ -99,6 +99,32 @@ def create_company_root_router(company_dependency, origin_dependency):
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
 
+    @router.post('/folders/remove', dependencies=[Depends(origin_dependency)])
+    def remove_folder(payload: RootFolderInput, connection=Depends(get_db, scope='function'), admin=Depends(company_dependency)):
+        try:
+            path = root_path(payload.parent, payload.name)
+            with connection.transaction():
+                lock_root(connection, admin['company_id'])
+                entry = connection.execute("""SELECT id,source_id FROM company_root_entry
+                    WHERE company_id=%s AND kind='folder' AND parent=%s AND name=%s FOR UPDATE""",
+                    (admin['company_id'], payload.parent, payload.name)).fetchone()
+                if not entry:
+                    raise HTTPException(404, 'Folder not found.')
+                if entry['source_id'] is not None:
+                    raise HTTPException(409, 'Migrated folders cannot be removed.')
+                if connection.execute(f'SELECT id FROM {ROOT_ENTRIES} WHERE company_id=%s AND parent=%s LIMIT 1',
+                        (admin['company_id'], path)).fetchone():
+                    raise HTTPException(409, 'Only an empty folder can be removed.')
+                if connection.execute("""SELECT id FROM stored_file WHERE company_id=%s
+                    AND (folder=%s OR folder LIKE %s) LIMIT 1""", (admin['company_id'], path, path + '/%')).fetchone():
+                    raise HTTPException(409, 'Only an empty folder can be removed.')
+                connection.execute('DELETE FROM company_root_entry WHERE id=%s', (entry['id'],))
+                connection.execute('INSERT INTO data_activity(company_id,actor,action,subject,detail) VALUES (%s,%s,%s,%s,%s)',
+                    (admin['company_id'], admin['name'], 'root_folder_remove', path, 'Company root'))
+            return {'path': path}
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+
     @router.get('/files/{identifier}/content')
     def download(identifier: UUID, connection=Depends(get_db, scope='function'), admin=Depends(company_dependency)):
         record = connection.execute("""SELECT entry.name AS filename,entry.size_bytes,entry.object_key,entry.object_version,entry.etag,storage.*

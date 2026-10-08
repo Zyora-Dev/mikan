@@ -63,6 +63,9 @@
 .retentionToggle { display: inline-flex; align-items: center; gap: 10px; min-height: 40px; font-size: 13px; color: #18251f; }
 .retentionToggle input { width: 17px; height: 17px; accent-color: #087c50; }
 .retention > label:not(.retentionToggle) { width: 150px; max-width: 100%; }
+.trashSettings { display: flex; align-items: start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.trashSettings .retention { flex: 1 1 480px; }
+.dangerButton { color: #8d1f2d; border-color: #bd8790; }
 .badge[data-state=purging], .table .badge[data-state=purging] { background: #fff4d8; color: #704714; }
 .badge[data-state=queued], .badge[data-state=inventory], .badge[data-state=transferring], .badge[data-state=verifying] { background: #fff4d8; color: #704714; }
 .badge[data-state=complete] { background: #e3f5ea; color: #075d39; }

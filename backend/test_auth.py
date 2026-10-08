@@ -455,7 +455,9 @@ class AdminAuthTests(unittest.TestCase):
         fixture = self.private_file_fixture()
         path = f"/team/files/{fixture['id']}"
         settings = '/company/teams/data/trash-settings'
+        empty = '/company/teams/data/trash/empty'
         self.assertEqual(self.client.post(path + '/trash', json={}, headers={'Origin': 'https://evil.invalid'}).status_code, 403)
+        self.assertEqual(self.client.post(empty, json={}, headers={'Origin': 'https://evil.invalid'}).status_code, 403)
         for payload in ({'enabled': 'true', 'retention_days': 30}, {'enabled': True, 'retention_days': 3651}, {'enabled': True, 'retention_days': 1.5}):
             self.assertEqual(self.client.post(settings, json=payload).status_code, 422)
         person = self.connection.execute("""INSERT INTO team_account(company_id,team_id,name,email,mobile,role,status,auth_type)
@@ -480,11 +482,16 @@ class AdminAuthTests(unittest.TestCase):
         self.assertEqual(self.client.post(admin_path, json=payload).status_code, 200)
         self.assertEqual(self.client.post(admin_path, json={**payload, 'action': 'trash', 'expected_state': 'ready'}).status_code, 200)
         self.assertEqual(self.client.post(path + '/restore', json={}).status_code, 409)
+        response = self.client.post(empty, json={})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {'detail': 'Trash cleanup queued.', 'queued': 1})
+        self.assertEqual(self.connection.execute('SELECT state FROM stored_file WHERE id=%s', (fixture['id'],)).fetchone()['state'], 'purging')
         self.client.cookies.set('mikan_team_session', token)
         self.assertEqual(self.client.get('/team/files/trash').json()['total'], 0)
         self.client.cookies.delete('mikan_company_admin_session')
         self.assertEqual(self.client.get(settings).status_code, 401)
         self.assertEqual(self.client.post(settings, json={'enabled': True, 'retention_days': 1}).status_code, 401)
+        self.assertEqual(self.client.post(empty, json={}).status_code, 401)
         self.client.cookies.delete('mikan_team_session')
         self.assertEqual(self.client.get('/team/files/trash').status_code, 401)
         self.assertEqual(self.client.post(path + '/trash', json={}).status_code, 401)

@@ -54,11 +54,29 @@ function RetentionForm({ policy, onSaved }: { policy: Retention; onSaved: () => 
   </>;
 }
 
-function RetentionSettings() {
+function RetentionSettings({ onEmpty }: { onEmpty: () => void }) {
   const [revision, setRevision] = useState(0);
   const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const dialog = useRef<HTMLDialogElement>(null);
   const state = useResource<Retention>(`${base}/trash-settings`, true, revision);
-  return <div><LoadState {...state} retry={() => setRevision(value => value + 1)} />{notice && <p role="status" className={shared.notice}>{notice}</p>}{state.data && <RetentionForm key={revision} policy={state.data} onSaved={() => { setNotice("Trash retention saved."); setRevision(value => value + 1); }} />}</div>;
+  async function emptyTrash() {
+    if (busy) return;
+    setBusy(true); setError("");
+    try {
+      const result = await teamRequest<{ queued: number }>(`${base}/trash/empty`, {});
+      dialog.current?.close(); setNotice(result.queued ? `${result.queued} file(s) queued for permanent cleanup.` : "Trash is already empty or cleanup is already in progress."); onEmpty();
+    } catch (failure) { setError(failure instanceof Error ? failure.message : "Unable to empty Trash."); }
+    finally { setBusy(false); }
+  }
+  return <div><LoadState {...state} retry={() => setRevision(value => value + 1)} />{notice && <p role="status" className={shared.notice}>{notice}</p>}{state.data && <div className={styles.trashSettings}><RetentionForm key={revision} policy={state.data} onSaved={() => { setNotice("Trash retention saved."); setRevision(value => value + 1); }} /><button type="button" className={`${shared.secondary} ${styles.dangerButton}`} disabled={busy} onClick={() => { setError(""); dialog.current?.showModal(); }}><Trash2 size={16} />Empty Trash</button></div>}
+    <dialog ref={dialog} className={shared.dialog} aria-labelledby="empty-trash-title" onCancel={event => { if (busy) event.preventDefault(); }}>
+      <header className={shared.dialogHeader}><h2 id="empty-trash-title">Permanently empty Trash?</h2><button type="button" className={shared.iconButton} title="Close" aria-label="Close" disabled={busy} onClick={() => dialog.current?.close()}><X size={18} /></button></header>
+      <div className={shared.formBody}><p className={styles.warning}>Every file currently in this company&apos;s Trash, including all saved versions, will be queued for permanent removal. Cleanup cannot be stopped and these files cannot be restored.</p><p className={styles.warning}>Storage is released only after removal is confirmed by the storage provider.</p>{error && <p className={shared.formError} role="alert">{error}</p>}</div>
+      <footer className={shared.dialogFooter}><button type="button" className={shared.secondary} disabled={busy} onClick={() => dialog.current?.close()}>Cancel</button><button type="button" className={`${shared.primary} ${styles.dangerButton}`} disabled={busy} onClick={() => void emptyTrash()}><Trash2 size={16} />{busy ? "Queueing..." : "Empty Trash"}</button></footer>
+    </dialog>
+  </div>;
 }
 
 function DrivePicker({ selected, onChange }: { selected: Drive | null; onChange: (drive: Drive) => void }) {
@@ -163,7 +181,9 @@ function CompanyRoot({ folder }: { folder: string }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [versionFile, setVersionFile] = useState<RootRow | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<RootRow | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
+  const removeDialog = useRef<HTMLDialogElement>(null);
   const params = new URLSearchParams({ folder, search, page: String(page) });
   if (from) params.set("from_date", from);
   if (to) params.set("to_date", to);
@@ -181,6 +201,20 @@ function CompanyRoot({ folder }: { folder: string }) {
     } catch (failure) { setError(failure instanceof Error ? failure.message : "Unable to create folder."); }
     finally { setBusy(false); }
   }
+  async function remove() {
+    if (!removeTarget || busy) return;
+    setBusy(true); setError("");
+    try {
+      const parts = removeTarget.path.split("/");
+      await teamRequest(`${base}/root/folders/remove`, { name: parts.pop(), parent: parts.join("/") });
+      removeDialog.current?.close(); setRemoveTarget(null); setNotice("Empty folder removed.");
+      setRevision(value => value + 1);
+    } catch (failure) { setError(failure instanceof Error ? failure.message : "Unable to remove folder."); }
+    finally { setBusy(false); }
+  }
+  function confirmRemove(entry: RootRow) {
+    setError(""); setRemoveTarget(entry); removeDialog.current?.showModal();
+  }
   function entryName(entry: RootRow) {
     return entry.kind === "folder" ? <Link className={styles.folderLink} href={folderHref(entry.path)}><Folder size={18} />{entry.name}</Link> : <strong>{entry.name}</strong>;
   }
@@ -188,7 +222,7 @@ function CompanyRoot({ folder }: { folder: string }) {
     return entry.kind === "file" && entry.state === "ready" ? <a className={shared.iconButton} href={`${base}/root/files/${entry.id}/content`} title="Download file" aria-label={`Download ${entry.name}`}><Download size={17} /></a> : null;
   }
   function actions(entry: RootRow) {
-    return entry.kind === "file" && entry.state === "ready" ? <div className={styles.actions}><button type="button" className={shared.iconButton} title="Version history" aria-label={`Version history for ${entry.name}`} onClick={() => setVersionFile(entry)}><History size={17} /></button>{download(entry)}</div> : null;
+    return entry.kind === "folder" ? <div className={styles.actions}><button type="button" className={`${shared.iconButton} ${styles.danger}`} title="Remove empty folder" aria-label={`Remove ${entry.name}`} onClick={() => confirmRemove(entry)}><Trash2 size={17} /></button></div> : entry.state === "ready" ? <div className={styles.actions}><button type="button" className={shared.iconButton} title="Version history" aria-label={`Version history for ${entry.name}`} onClick={() => setVersionFile(entry)}><History size={17} /></button>{download(entry)}</div> : null;
   }
   return <section className={`${shared.section} ${styles.section}`}>
     <div className={styles.heading}><h1>Data Administration</h1><div className={styles.actions}><button className={shared.iconButton} title="Refresh" aria-label="Refresh company root" onClick={() => setRevision(value => value + 1)}><RefreshCw size={18} /></button><button className={shared.primary} onClick={open}><FolderPlus size={17} />New folder</button></div></div>
@@ -201,6 +235,11 @@ function CompanyRoot({ folder }: { folder: string }) {
     {!!state.data?.items.length && <><div className={styles.desktop}><table className={styles.table}><thead><tr><th>Name</th><th>Type</th><th>Size / Status</th><th>Added on</th><th>Actions</th></tr></thead><tbody>{state.data.items.map(entry => <tr key={entry.id}><td>{entryName(entry)}</td><td>{entry.kind === "folder" ? "Folder" : "File"}</td><td>{entry.kind === "file" ? bytes(entry.size_bytes) : ""}{entry.state === "pending" && <small className={styles.badge}>Import pending</small>}</td><td>{dateTime(entry.created_at)}</td><td>{actions(entry)}</td></tr>)}</tbody></table></div><div className={styles.mobile}>{state.data.items.map(entry => <article className={styles.item} key={entry.id}><header>{entryName(entry)}</header><dl>{entry.kind === "file" && <div><dt>Size</dt><dd>{bytes(entry.size_bytes)}</dd></div>}<div><dt>Added on</dt><dd>{dateTime(entry.created_at)}</dd></div>{entry.state === "pending" && <div><dt>Status</dt><dd>Import pending</dd></div>}</dl>{actions(entry)}</article>)}</div></>}
     {state.data && <Pagination total={state.data.total} page={page} setPage={setPage} />}
     <dialog ref={dialog} className={shared.dialog} aria-labelledby="root-folder-title" onCancel={event => { if (busy) event.preventDefault(); }}><form onSubmit={save}><header className={shared.dialogHeader}><h2 id="root-folder-title">Create folder</h2><button type="button" className={shared.iconButton} title="Close" aria-label="Close dialog" disabled={busy} onClick={() => dialog.current?.close()}><X size={18} /></button></header><fieldset className={shared.formBody} disabled={busy}><p className={styles.selection}>{folder || "Company root"}</p><label className={shared.field}>Folder name<input required maxLength={255} value={name} onChange={event => setName(event.target.value)} /></label>{error && <p className={shared.formError} role="alert">{error}</p>}</fieldset><footer className={shared.dialogFooter}><button type="button" className={shared.secondary} disabled={busy} onClick={() => dialog.current?.close()}>Cancel</button><button className={shared.primary} disabled={busy}><Save size={16} />{busy ? "Saving..." : "Create"}</button></footer></form></dialog>
+    <dialog ref={removeDialog} className={shared.dialog} aria-labelledby="root-remove-title" onCancel={event => { if (busy) event.preventDefault(); else setRemoveTarget(null); }}>
+      <header className={shared.dialogHeader}><h2 id="root-remove-title">Remove empty folder</h2><button type="button" className={shared.iconButton} title="Close" aria-label="Close dialog" disabled={busy} onClick={() => { removeDialog.current?.close(); setRemoveTarget(null); }}><X size={18} /></button></header>
+      <div className={shared.formBody}><p className={styles.selection}>{removeTarget?.path}</p><p className={styles.warning}>Only a manually created empty folder can be removed. Folders containing files or subfolders and migrated folders are protected.</p>{error && <p className={shared.formError} role="alert">{error}</p>}</div>
+      <footer className={shared.dialogFooter}><button type="button" className={shared.secondary} disabled={busy} onClick={() => { removeDialog.current?.close(); setRemoveTarget(null); }}>Cancel</button><button type="button" className={shared.primary} disabled={busy} onClick={() => void remove()}><Trash2 size={16} />{busy ? "Removing..." : "Remove folder"}</button></footer>
+    </dialog>
     {versionFile && <RootVersions file={versionFile} close={() => setVersionFile(null)} />}
   </section>;
 }
@@ -274,7 +313,7 @@ function DriveDataManager({ view }: { view: View }) {
   return <section className={`${shared.section} ${styles.section}`}>
     <div className={styles.heading}><h1>Data Administration</h1><div className={styles.actions}><button className={shared.iconButton} title="Refresh" aria-label="Refresh data" onClick={() => setRevision(value => value + 1)}><RefreshCw size={18} /></button><button className={shared.primary} onClick={() => open({ kind: "folder", action: "create" })}><FolderPlus size={17} />New folder</button></div></div>
     <DataViews view={view} onNavigate={() => { setPage(1); setLocation(null); }} />
-    {view === "trash" && <RetentionSettings />}
+    {view === "trash" && <RetentionSettings onEmpty={() => { setPage(1); setRevision(value => value + 1); }} />}
     {notice && <div className={shared.notice} role="status"><span>{notice}</span><button className={shared.iconButton} title="Dismiss" aria-label="Dismiss notice" onClick={() => setNotice("")}><X size={16} /></button></div>}
     {location && <nav className={styles.breadcrumb} aria-label="Folder location"><button onClick={() => { setLocation(null); setPage(1); }}>All files</button><ChevronRight size={14} /><span>{location.owner_name} / {location.team_name}</span><ChevronRight size={14} />{location.path ? location.path.split("/").map((part, index, parts) => <button key={index} onClick={() => browse({ ...location, path: parts.slice(0, index + 1).join("/") })}>{part}{index < parts.length - 1 && <ChevronRight size={14} />}</button>) : <span>Drive root</span>}</nav>}
     <Filters search={search} setSearch={value => { setSearch(value); setPage(1); }} from={from} setFrom={value => { setFrom(value); setPage(1); }} to={to} setTo={value => { setTo(value); setPage(1); }} />

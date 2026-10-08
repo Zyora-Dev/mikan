@@ -34,6 +34,15 @@ def create_trash_router(company_dependency, origin_dependency):
             (admin['company_id'], admin['name'], 'trash_policy', 'Trash retention', f'Automatic cleanup: {payload.enabled}; retention: {payload.retention_days} days.'))
         return {'detail': 'Trash retention saved.'}
 
+    @router.post('/company/teams/data/trash/empty', dependencies=mutation)
+    def empty_trash(connection=Depends(get_db, scope='function'), admin=Depends(company_dependency)):
+        with connection.transaction():
+            queued = connection.execute("""UPDATE stored_file SET state='purging',purge_next_attempt_at=NULL,purge_error=NULL
+                WHERE company_id=%s AND state='trashed' RETURNING id""", (admin['company_id'],)).fetchall()
+            connection.execute('INSERT INTO data_activity(company_id,actor,action,subject,detail) VALUES (%s,%s,%s,%s,%s)',
+                (admin['company_id'], admin['name'], 'trash_empty', 'Company Trash', f'{len(queued)} file(s) queued for permanent cleanup.'))
+        return {'detail': 'Trash cleanup queued.', 'queued': len(queued)}
+
     @router.get('/team/files/trash')
     def trash_files(connection=Depends(get_db, scope='function'), account=Depends(current_team_account),
                     page: int = Query(1, ge=1, le=100000), search: str = Query('', max_length=100),

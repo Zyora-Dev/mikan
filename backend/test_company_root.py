@@ -47,6 +47,7 @@ class CompanyRootTests(unittest.TestCase):
         from main import app
         paths = app.openapi()['paths']
         self.assertIn('/company/teams/data/root', paths)
+        self.assertIn('/company/teams/data/root/folders/remove', paths)
         self.assertIn('/company/teams/data/root/files/{identifier}/content', paths)
         self.assertIn('/company/teams/data/root/files/{identifier}/versions', paths)
         self.assertIn('/company/teams/data/root/files/{identifier}/versions/{version_id}/content', paths)
@@ -138,6 +139,27 @@ class CompanyRootDatabaseTests(unittest.TestCase):
             self.assertEqual(response.status_code, 409, response.text)
         self.connection.execute("INSERT INTO company_root_entry(company_id,kind,parent,name) VALUES (%s,'folder','','Engineering')", (self.company,))
         self.assertEqual([item['path'] for item in self.browse()['items']].count('Engineering'), 1)
+
+    def test_manual_empty_root_folder_removal_is_guarded(self):
+        self.assertEqual(self.client.post('/company/teams/data/root/folders', json={'name': 'Mikan'}).status_code, 201)
+        response = self.client.post('/company/teams/data/root/folders/remove', json={'name': 'Mikan'})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {'path': 'Mikan'})
+        self.assertNotIn('Mikan', [item['path'] for item in self.browse()['items']])
+
+        self.assertEqual(self.client.post('/company/teams/data/root/folders', json={'name': 'Occupied'}).status_code, 201)
+        self.assertEqual(self.client.post('/company/teams/data/root/folders', json={'name': 'Child', 'parent': 'Occupied'}).status_code, 201)
+        response = self.client.post('/company/teams/data/root/folders/remove', json={'name': 'Occupied'})
+        self.assertEqual(response.status_code, 409, response.text)
+
+        self.assertEqual(self.client.post('/company/teams/data/root/folders', json={'name': 'Contains trash'}).status_code, 201)
+        self.file('trashed.pdf', 'Contains trash', 'trashed')
+        response = self.client.post('/company/teams/data/root/folders/remove', json={'name': 'Contains trash'})
+        self.assertEqual(response.status_code, 409, response.text)
+
+        create_root_folder(self.connection, self.company, RootFolderInput(name='Imported'), 'zoho-folder')
+        response = self.client.post('/company/teams/data/root/folders/remove', json={'name': 'Imported'})
+        self.assertEqual(response.status_code, 409, response.text)
 
     def test_company_isolation_downloads_and_hidden_states(self):
         record = self.file('drawing.pdf', 'Engineering/Plans')
