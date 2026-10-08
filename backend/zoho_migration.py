@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field
 
-from company_root import RootFolderInput, create_root_folder
+from company_root import ROOT_ENTRIES, RootFolderInput, create_root_folder
 from database import connect, get_db
 from uploads import storage_client
 from zoho_inventory import InventoryError, WorkDriveReader, children
@@ -317,6 +317,12 @@ def reserve_items(connection, job, items):
 
     with connection.transaction():
         try_lock_root(connection, job['company_id'])
+        destination_root = connection.execute(
+            f"SELECT id FROM {ROOT_ENTRIES} WHERE company_id=%s AND path=%s AND kind='folder'",
+            (job['company_id'], DESTINATION_ROOT),
+        ).fetchone()
+        if not destination_root:
+            create_root_folder(connection, job['company_id'], RootFolderInput(name=DESTINATION_ROOT), MIKAN_ROOT_ID)
         storage = destination_storage(connection, job['company_id'])
         files = [item for item in items if item['kind'] == 'file']
         versions = [item for item in items if item['kind'] == 'version']

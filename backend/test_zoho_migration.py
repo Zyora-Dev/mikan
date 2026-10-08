@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from database import get_db
 from zoho_inventory import InventoryError
-from zoho_migration import MIKAN_ROOT_ID, MigrationDeferred, create_migration_router, current_entry, execute_job, historical_url, historical_versions, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, source_folder, transfer_item, try_lock_root, verify_ready_checkpoint
+from zoho_migration import MIKAN_ROOT_ID, MigrationDeferred, create_migration_router, current_entry, execute_job, historical_url, historical_versions, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_folder, transfer_item, try_lock_root, verify_ready_checkpoint
 
 
 class Transaction:
@@ -408,6 +408,36 @@ class ZohoMigrationTests(unittest.TestCase):
         failed = next(call for call in connection.execute.call_args_list
                       if "status='failed'" in call.args[0])
         self.assertEqual(failed.args[1], ('Parent folder not found.', job['id']))
+
+    @patch('zoho_migration.destination_storage')
+    @patch('zoho_migration.create_root_folder')
+    def test_reservation_creates_missing_mikan_destination_root(self, create_folder, destination_storage):
+        connection = Mock()
+        connection.transaction.return_value = Transaction()
+        storage = {'id': 24, 'max_file_bytes': 5_000_000_000}
+        destination_storage.return_value = storage
+
+        def execute(query, *_args):
+            result = Mock()
+            if 'pg_try_advisory_xact_lock' in query:
+                result.fetchone.return_value = {'acquired': True}
+            elif 'WITH folder_sources AS' in query:
+                result.fetchone.return_value = None
+            elif 'coalesce(sum' in query:
+                result.fetchone.return_value = {'bytes': 0}
+            return result
+
+        connection.execute.side_effect = execute
+
+        reserved = reserve_items(connection, {'id': uuid4(), 'company_id': 7}, [])
+
+        self.assertEqual(reserved, storage)
+        create_folder.assert_called_once()
+        _connection, company_id, payload, source_id = create_folder.call_args.args
+        self.assertEqual(company_id, 7)
+        self.assertEqual(payload.name, 'Mikan')
+        self.assertEqual(payload.parent, '')
+        self.assertEqual(source_id, MIKAN_ROOT_ID)
 
     @patch('zoho_migration.migration_credentials', return_value={})
     @patch('zoho_migration.WorkDriveReader')
