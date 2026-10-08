@@ -6,7 +6,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from database import get_db
-from zoho_migration import MIKAN_ROOT_ID, create_migration_router, current_entry, execute_job, process_migrations, reader_relationship, source_folder
+from zoho_inventory import InventoryError
+from zoho_migration import MIKAN_ROOT_ID, create_migration_router, current_entry, execute_job, historical_url, process_migrations, reader_relationship, source_folder
 
 
 class Transaction:
@@ -45,6 +46,49 @@ class ZohoMigrationTests(unittest.TestCase):
         self.assertEqual(reader.refresh.call_count, 1)
         self.assertEqual(reader.requests, 2)
         self.assertEqual(reader.client.get.call_args_list[1].kwargs['headers']['Authorization'], 'Zoho-oauthtoken fresh')
+
+    def test_historical_url_falls_back_to_version_download_for_unpreviewable_file(self):
+        reader = Mock()
+        reader.version_preview_info.return_value = {'data': {'attributes': {
+            'preview_status': -14, 'size': '12.0 KB', 'size_in_bytes': '12285',
+        }}}
+        item = {
+            'source_file_id': 'whiteboard123', 'source_version_id': 'whiteboard123-456',
+            'version_label': '1.0', 'size_bytes': 12285,
+        }
+
+        url = historical_url(reader, item)
+
+        self.assertEqual(url.host, 'download-accl.zoho.in')
+        self.assertEqual(url.path, '/v1/workdrive/download/whiteboard123')
+        self.assertEqual(url.params['version'], '1.0')
+
+    def test_historical_url_rejects_different_version_selector(self):
+        reader = Mock()
+        reader.version_preview_info.return_value = {'data': {'attributes': {
+            'preview_data_url': 'https://download-accl.zoho.in/v1/workdrive/previewdata/file123?version=999',
+            'size': 42,
+        }}}
+        item = {
+            'source_file_id': 'file123', 'source_version_id': 'file123-456',
+            'version_label': '1.0', 'size_bytes': 42,
+        }
+
+        with self.assertRaises(InventoryError):
+            historical_url(reader, item)
+
+    def test_historical_preview_url_accepts_source_version_identifier(self):
+        reader = Mock()
+        reader.version_preview_info.return_value = {'data': {'attributes': {
+            'preview_data_url': 'https://download-accl.zoho.in/v1/workdrive/previewdata/file123?version=456',
+            'size': 42,
+        }}}
+        item = {
+            'source_file_id': 'file123', 'source_version_id': 'file123-456',
+            'version_label': '1.0', 'size_bytes': 42,
+        }
+
+        self.assertEqual(historical_url(reader, item).params['version'], '456')
 
     def app(self, connection, origin=lambda: None):
         app = FastAPI()

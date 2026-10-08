@@ -328,13 +328,21 @@ def historical_url(reader, item):
     attributes = metadata.get('data', {}).get('attributes', {})
     raw_url = attributes.get('preview_data_url')
     if not isinstance(raw_url, str):
-        raise InventoryError('Source did not provide a historical download URL.')
+        raw_url = str(httpx.URL(
+            f'https://download-accl.zoho.in/v1/workdrive/download/{item["source_file_id"]}'
+        ).copy_add_param('version', item['version_label']))
     url = httpx.URL(raw_url)
+    allowed_paths = {
+        f"/v1/workdrive/previewdata/{item['source_file_id']}",
+        f"/v1/workdrive/download/{item['source_file_id']}",
+    }
+    expected_version = (item['source_version_id'].rsplit('-', 1)[-1]
+                        if url.path.startswith('/v1/workdrive/previewdata/') else item['version_label'])
     if (url.scheme != 'https' or url.host != 'download-accl.zoho.in' or url.port not in (None, 443)
-            or url.userinfo or url.fragment or url.path != f"/v1/workdrive/previewdata/{item['source_file_id']}"
-            or not url.params.get('version')):
+            or url.userinfo or url.fragment or url.path not in allowed_paths
+            or url.params.get('version') != expected_version):
         raise InventoryError('Unverified historical download URL; credentials were not sent.')
-    reported = attributes.get('file_size', attributes.get('size'))
+    reported = attributes.get('file_size', attributes.get('size_in_bytes', attributes.get('size')))
     if reported is not None and str(reported) != str(item['size_bytes']):
         raise InventoryError('Historical source size changed; migration stopped.')
     return url
