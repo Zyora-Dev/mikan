@@ -3,6 +3,90 @@
 Team sign-in remains at `/`. Super admin email/password sign-in is at
 `/admin/login`, with a server-verified account page at `/admin`.
 
+## Zoho Self Client Authorization
+
+The standalone `zoho_authorize.py` helper authorizes the existing Zoho India
+Self Client. It does not import application modules, connect to the database,
+migrate files, or change production configuration.
+
+Enter `ZOHO_CLIENT_ID`, `ZOHO_CLIENT_SECRET`, an empty `ZOHO_REFRESH_TOKEN`, and
+`ZOHO_ACCOUNTS_URL=https://accounts.zoho.in` in the Git-ignored `backend/.env.zoho`.
+The file must be owned by the current user with permissions `600` and must not
+be a symlink. Never paste credentials, authorization codes, or tokens into chat.
+
+From the repository root, using the existing local virtual environment:
+
+```sh
+.venv/bin/python backend/zoho_authorize.py --check
+.venv/bin/python backend/zoho_authorize.py
+```
+
+`--check` validates local configuration only, without a network request or write.
+Run the second command yourself in an interactive terminal. Once the hidden
+code prompt is ready, use Self Client > Generate Code with these verified scopes:
+
+```text
+WorkDrive.teamfolders.READ,WorkDrive.files.READ,ZohoFiles.files.READ
+```
+
+Select the longest available expiry, enter a migration description, and create
+the code (select the relevant WorkDrive portal if prompted). Immediately paste
+it into the terminal's hidden prompt and press Enter. The helper posts once to
+`https://accounts.zoho.in/oauth/v2/token` over verified TLS, without redirects or
+environment proxies, then atomically saves only the refresh token in `.env.zoho`.
+Other settings are preserved; an existing refresh token is never overwritten.
+No code or token is printed or accepted as a command-line argument. A successful
+local check does not validate the credentials with Zoho or confirm folder access.
+
+Failures do not trigger automatic retries. A network failure can consume the
+code; a local save failure can leave the issued token unsaved. Resolve the
+reported problem before generating another code. Application code does not
+automatically load `.env.zoho`; importer and Render configuration are separate,
+pending work. Leave Zoho originals untouched.
+
+Offline tests (no database or live Zoho access):
+
+```sh
+cd backend
+../.venv/bin/python -m unittest test_zoho_authorize -v
+```
+
+## Zoho Read-Only Inventory
+
+After authorization, use the saved refresh token without generating another code:
+
+```sh
+.venv/bin/python backend/zoho_inventory.py --probe
+.venv/bin/python backend/zoho_inventory.py --max-folders 100
+```
+
+The probe prints only source root names and Zoho-reported aggregates. The scan
+walks General and Mikan using metadata GET requests, including empty folders,
+and uses Zoho's native-document filters. No file contents are downloaded, no
+source is changed, and no destination/user allocation is created. Root reported
+storage totals are separate from bytes summed over individually observed files.
+Native-document export sizes are not known until a later export stage.
+
+Exact names, parent IDs and checkpoints are stored in the Git-ignored
+`backend/.zoho-inventory/inventory.sqlite3` (directory 700, file 600). This is a
+standalone inventory, not an application database. It contains private source
+names: do not upload or commit it. It stores no credentials or download URLs.
+Each folder commits atomically after its complete listing and native checks;
+rerunning resumes pending folders. Never run two scanners concurrently.
+
+The default batch is 100 folders. `--max-folders 0` continues until traversal
+finishes; large sources may take many hours. HTTP/network errors stop without
+retries; completed checkpoints remain. A partial summary is not a completed
+inventory. Counts exclude the two root folders, deleted/trash items and old
+versions. Only accessible live content is traversed, not a point-in-time
+snapshot. Keep the source stable; changes during a long scan require a final
+reconciliation before migration. Download/export permissions are not tested.
+
+```sh
+cd backend
+../.venv/bin/python -m unittest test_zoho_authorize test_zoho_inventory -v
+```
+
 ## WhatsApp
 
 Super Admin > WhatsApp (`/admin/whatsapp`) contains Settings, Consents and

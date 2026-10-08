@@ -24,6 +24,7 @@ from workflows import create_workflow_router
 from uploads import create_upload_router
 from file_versions import create_version_router
 from data_administration import create_data_router
+from company_root import create_company_root_router
 from insights import create_insights_router
 from notifications import create_notification_router
 from automation import create_automation_router, tick
@@ -242,6 +243,7 @@ app.include_router(create_file_share_router(check_origin))
 app.include_router(create_version_router(check_origin))
 app.include_router(create_upload_router(current_company_admin, check_origin))
 app.include_router(create_data_router(current_company_admin, check_origin))
+app.include_router(create_company_root_router(current_company_admin, check_origin))
 app.include_router(create_trash_router(current_company_admin, check_origin))
 app.include_router(create_insights_router(current_company_admin, True))
 app.include_router(create_insights_router(current_admin, False))

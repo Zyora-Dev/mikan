@@ -87,6 +87,8 @@ def save_connection(connection, provider, payload, admin_id, connection_id=None)
         ))
         if destination_changed and connection.execute("SELECT 1 FROM stored_file WHERE connection_id=%s LIMIT 1", (connection_id,)).fetchone():
             raise HTTPException(409, "This connection contains registered files. Its storage destination cannot be changed.")
+        if destination_changed and connection.execute("SELECT 1 FROM company_root_entry WHERE connection_id=%s LIMIT 1", (connection_id,)).fetchone():
+            raise HTTPException(409, "This connection contains company-root files. Its storage destination cannot be changed.")
     if bool(payload.access_key) != bool(payload.secret_key):
         raise HTTPException(422, "Replace both access key and secret key together.")
     if not existing and not payload.access_key:

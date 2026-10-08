@@ -5,10 +5,10 @@ import DataManager from "./data-manager";
 
 export const metadata = { title: "Data Administration | Mikan" };
 
-export default async function DataPage({ searchParams }: { searchParams: Promise<{ view?: string | string[] }> }) {
+export default async function DataPage({ searchParams }: { searchParams: Promise<{ view?: string | string[]; folder?: string | string[] }> }) {
   const admin = await getCompanyAdmin();
   if (!admin) redirect("/company/admin/login");
-  const { view: requestedView } = await searchParams;
-  const view = requestedView === "folders" || requestedView === "trash" || requestedView === "activity" ? requestedView : "files";
-  return <CompanyWorkspace admin={admin} active="data"><DataManager view={view} /></CompanyWorkspace>;
+  const { view: requestedView, folder } = await searchParams;
+  const view = requestedView === "files" || requestedView === "folders" || requestedView === "trash" || requestedView === "activity" ? requestedView : "root";
+  return <CompanyWorkspace admin={admin} active="data"><DataManager view={view} folder={typeof folder === "string" ? folder : ""} /></CompanyWorkspace>;
 }

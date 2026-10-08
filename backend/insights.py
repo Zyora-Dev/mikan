@@ -117,6 +117,8 @@ def create_insights_router(admin_dependency, company_scope):
         response.headers.update(PRIVATE_HEADERS)
         totals = connection.execute('''SELECT coalesce(sum(storage_used_bytes),0) AS used_bytes,count(*) AS teams
             FROM team WHERE company_id=%s''', (company,)).fetchone()
+        root_bytes = connection.execute('SELECT coalesce(sum(size_bytes),0) AS bytes FROM company_root_entry WHERE company_id=%s', (company,)).fetchone()['bytes']
+        totals['used_bytes'] += root_bytes
         previews = {}
         for name, amount in [('storage-teams', 'used_bytes'), ('storage-employees', 'used_bytes'), ('largest-files', 'size_bytes')]:
             dataset, columns = REPORTS[name]
