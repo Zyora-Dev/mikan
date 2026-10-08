@@ -1,10 +1,10 @@
 # Mikan Progress
 
-## Multi-Folder Migration Queue - 2026-10-08 (Local Verified)
+## Multi-Folder Migration Queue - 2026-10-08 (Pushed)
 - Added an origin-protected atomic batch queue endpoint for 1-25 distinct Zoho folders. It validates every selected folder from one live Mikan listing before opening the database transaction, rejects the whole selection if any source is invalid, reuses existing jobs idempotently and creates only missing durable jobs under `Company Root/Mikan/<folder>`.
 - The Migration screen now supports checkbox selection of unmigrated folders and a single `Migrate selected` command. Existing active, completed and failed jobs remain non-selectable; individual migration and retry controls remain available. The Next.js company proxy explicitly permits only the exact batch route.
 - Processing intentionally remains serial: the established worker claims one queued job and transfers one file/version at a time, preserving current OAuth reuse, temporary-disk bounds, immutable object writes, SHA-256 readback, destination identity checks and resumability. This release does not add multipart transfer, parallel downloads or require a Render compute/disk change.
-- PASS all 40 focused migration tests, targeted frontend ESLint, edited-file diagnostics and patch whitespace validation. No production deployment, migration click or Render configuration change performed.
+- PASS all 40 focused migration tests, targeted frontend ESLint, Python compilation, edited-file diagnostics and patch whitespace validation. PUSH VERIFIED: release `05a88ddc668641fd77d3b8cda5c3d5a0cfcd3765` reached `origin/main`. No production deployment, migration click or Render configuration change performed.
 
 ## PROJECT UPDATES OAuth Blocker Audit - 2026-10-08 (Local Verified)
 - Root cause of the stop at 445/901 historical versions was OAuth token issuance exhaustion: the 15-second Migration-screen poll created a fresh WorkDrive reader and requested another access token even while the durable job was active. Active `queued`, `inventory`, `transferring`, and `verifying` responses now come entirely from `zoho_migration_job`; they do not contact Zoho. Idle source browsing and new-job validation still use live source discovery. The worker continues to use one reader/access token per execution and refreshes only before expiry or once after HTTP 401.
