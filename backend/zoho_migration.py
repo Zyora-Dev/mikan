@@ -22,6 +22,7 @@ from zoho_migrate_general_version import migration_credentials
 
 
 MIKAN_ROOT_ID = '4ligq5e352ffc509e405c863fc17a7c4d83c1'
+DESTINATION_ROOT = 'Mikan'
 JOB_COLUMNS = '''id,source_folder_id,source_folder_name,destination_path,status,phase,
     folders_total,folders_complete,files_total,files_complete,versions_total,versions_complete,
     bytes_total,bytes_complete,attempts,last_error,created_at,started_at,completed_at,updated_at'''
@@ -169,7 +170,7 @@ def inventory_folder(reader, source_id, root_name):
                         raise InventoryError('Conflicting source version metadata.')
                     versions[parsed['source_id']] = parsed
             items.extend(versions.values())
-    visit(source_id, MIKAN_ROOT_ID, '', root_name)
+    visit(source_id, MIKAN_ROOT_ID, DESTINATION_ROOT, root_name)
     if len({(item['kind'], item['source_id']) for item in items}) != len(items):
         raise InventoryError('Repeated source item detected during inventory.')
     return items
@@ -196,6 +197,44 @@ def select_job(connection, company_id, source_folder_id):
         f'SELECT {JOB_COLUMNS} FROM zoho_migration_job WHERE company_id=%s AND source_root_id=%s AND source_folder_id=%s',
         (company_id, MIKAN_ROOT_ID, source_folder_id),
     ).fetchone()
+
+
+def repair_legacy_destination(connection, job, items):
+    old_root = job['source_folder_name']
+    new_root = f'{DESTINATION_ROOT}/{old_root}'
+    if job['destination_path'] == new_root:
+        return items
+    if job['destination_path'] != old_root or any(
+            item['destination_path'] != old_root and not item['destination_path'].startswith(old_root + '/')
+            for item in items):
+        raise InventoryError('Migration destination checkpoint is inconsistent; nothing moved.')
+    if any(len(f'{DESTINATION_ROOT}/{item["destination_path"]}') > 255 for item in items):
+        raise InventoryError('Correct Mikan destination exceeds the path limit; nothing moved.')
+    with connection.transaction():
+        lock_root(connection, job['company_id'])
+        if not connection.execute(
+                "SELECT id FROM company_root_entry WHERE company_id=%s AND kind='folder' AND path=%s",
+                (job['company_id'], DESTINATION_ROOT)).fetchone():
+            raise InventoryError('Company Root / Mikan is missing; nothing moved.')
+        for item in items:
+            identifier = item['destination_entry_id']
+            if not identifier or item['kind'] == 'version':
+                continue
+            new_path = f"{DESTINATION_ROOT}/{item['destination_path']}"
+            parent, _, _name = new_path.rpartition('/')
+            collision = connection.execute(
+                'SELECT id FROM company_root_entry WHERE company_id=%s AND path=%s AND id<>%s',
+                (job['company_id'], new_path, identifier),
+            ).fetchone()
+            if collision:
+                raise InventoryError('Correct Mikan destination already exists; nothing moved.')
+            connection.execute('UPDATE company_root_entry SET parent=%s WHERE id=%s AND company_id=%s',
+                               (parent, identifier, job['company_id']))
+        connection.execute("""UPDATE zoho_migration_item SET destination_path=%s || '/' || destination_path,
+            updated_at=clock_timestamp() WHERE job_id=%s""", (DESTINATION_ROOT, job['id']))
+        connection.execute('UPDATE zoho_migration_job SET destination_path=%s,updated_at=clock_timestamp() WHERE id=%s',
+                           (new_root, job['id']))
+    return [{**item, 'destination_path': f"{DESTINATION_ROOT}/{item['destination_path']}"} for item in items]
 
 
 def destination_storage(connection, company_id):
@@ -448,6 +487,8 @@ def execute_job(connection, job):
             persist_inventory(connection, job, items)
             items = connection.execute('SELECT * FROM zoho_migration_item WHERE job_id=%s ORDER BY destination_path,kind,source_id',
                 (job['id'],)).fetchall()
+        items = repair_legacy_destination(connection, job, items)
+        job = {**job, 'destination_path': f"{DESTINATION_ROOT}/{job['source_folder_name']}"}
         storage = reserve_items(connection, job, items)
         items = connection.execute('SELECT * FROM zoho_migration_item WHERE job_id=%s ORDER BY destination_path,kind,source_id',
             (job['id'],)).fetchall()
@@ -541,7 +582,8 @@ def create_migration_router(company_dependency, origin_dependency):
                 f'''INSERT INTO zoho_migration_job
                     (company_id,source_root_id,source_folder_id,source_folder_name,destination_path)
                     VALUES (%s,%s,%s,%s,%s) RETURNING {JOB_COLUMNS}''',
-                (admin['company_id'], MIKAN_ROOT_ID, folder['source_folder_id'], folder['name'], folder['name']),
+                (admin['company_id'], MIKAN_ROOT_ID, folder['source_folder_id'], folder['name'],
+                 f"{DESTINATION_ROOT}/{folder['name']}"),
             ).fetchone()
         return job_dict(job)
 

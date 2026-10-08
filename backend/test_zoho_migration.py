@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from database import get_db
 from zoho_inventory import InventoryError
-from zoho_migration import MIKAN_ROOT_ID, create_migration_router, current_entry, execute_job, historical_url, process_migrations, reader_relationship, source_folder
+from zoho_migration import MIKAN_ROOT_ID, create_migration_router, current_entry, execute_job, historical_url, process_migrations, reader_relationship, repair_legacy_destination, source_folder
 
 
 class Transaction:
@@ -134,6 +134,24 @@ class ZohoMigrationTests(unittest.TestCase):
         with TestClient(self.app(connection, blocked)) as client:
             self.assertEqual(client.post('/company/teams/data/migration/jobs', json={'source_folder_id': 'lesson123'}).status_code, 403)
 
+    @patch('zoho_migration.list_source_folders', return_value=[
+        {'source_folder_id': 'whiteboards123', 'name': 'Whiteboards', 'size_bytes': 12285},
+    ])
+    def test_new_job_targets_mikan_folder(self, _folders):
+        created = {'id': uuid4(), 'source_folder_id': 'whiteboards123', 'status': 'queued'}
+        connection = Mock()
+        connection.transaction.return_value = Transaction()
+        results = iter((None, created))
+        connection.execute.return_value.fetchone.side_effect = lambda: next(results)
+
+        with TestClient(self.app(connection)) as client:
+            response = client.post('/company/teams/data/migration/jobs', json={'source_folder_id': 'whiteboards123'})
+
+        self.assertEqual(response.status_code, 202, response.text)
+        insert = next(call for call in connection.execute.call_args_list
+                      if 'INSERT INTO zoho_migration_job' in call.args[0])
+        self.assertEqual(insert.args[1][-1], 'Mikan/Whiteboards')
+
     def test_retry_is_tenant_scoped_and_failed_only(self):
         connection = Mock()
         connection.transaction.return_value = Transaction()
@@ -143,6 +161,38 @@ class ZohoMigrationTests(unittest.TestCase):
             response = client.post(f'/company/teams/data/migration/jobs/{identifier}/retry', json={})
         self.assertEqual(response.status_code, 409, response.text)
         self.assertEqual(connection.execute.call_args.args[1], (identifier, 7))
+
+    def test_legacy_destination_rebases_records_without_changing_ids(self):
+        folder_id = uuid4()
+        file_id = uuid4()
+        job_id = uuid4()
+        items = [
+            {'kind': 'folder', 'destination_path': 'Whiteboards', 'destination_entry_id': folder_id},
+            {'kind': 'file', 'destination_path': 'Whiteboards/Meeting.whiteboard', 'destination_entry_id': file_id},
+            {'kind': 'version', 'destination_path': 'Whiteboards/Meeting.whiteboard', 'destination_entry_id': file_id},
+        ]
+        job = {'id': job_id, 'company_id': 7, 'source_folder_name': 'Whiteboards',
+               'destination_path': 'Whiteboards'}
+        connection = Mock()
+        connection.transaction.return_value = Transaction()
+
+        def execute(query, *_args):
+            result = Mock()
+            result.fetchone.return_value = {'id': uuid4()} if 'kind=\'folder\'' in query else None
+            return result
+
+        connection.execute.side_effect = execute
+
+        rebased = repair_legacy_destination(connection, job, items)
+
+        self.assertEqual([item['destination_path'] for item in rebased], [
+            'Mikan/Whiteboards', 'Mikan/Whiteboards/Meeting.whiteboard',
+            'Mikan/Whiteboards/Meeting.whiteboard',
+        ])
+        updates = [call.args for call in connection.execute.call_args_list
+                   if call.args[0].startswith('UPDATE company_root_entry SET parent=')]
+        self.assertEqual([args[1][1] for args in updates], [folder_id, file_id])
+        self.assertEqual([args[1][0] for args in updates], ['Mikan', 'Mikan/Whiteboards'])
 
     @patch('zoho_migration.connect')
     def test_worker_reclaims_interrupted_nonterminal_jobs(self, connect):
