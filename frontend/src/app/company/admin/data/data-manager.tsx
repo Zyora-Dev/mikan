@@ -1,9 +1,9 @@
 "use client";
 
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronRight, Download, File, Folder, FolderPlus, History, Pencil, RefreshCw, RotateCcw, Save, Trash2, X } from "lucide-react";
+import { ArrowRightLeft, ChevronRight, Download, File, Folder, FolderPlus, History, Pencil, RefreshCw, RotateCcw, Save, Trash2, X } from "lucide-react";
 import { teamRequest, TeamRequestError } from "@/lib/team-client";
 import { dateTime, Filters, LoadState, Pagination, useResource } from "../workflows/workflow-ui";
 import shared from "../../../admin/companies/companies.module.css";
@@ -16,6 +16,8 @@ type FolderRow = Drive & { path: string; created_at: string };
 type EventRow = { id: number; actor: string; action: string; subject: string; detail: string; created_at: string };
 type Person = { id: number; name: string; team_id: number; team_name: string; email: string };
 type View = "files" | "folders" | "trash" | "activity";
+type MigrationJob = { id: string; status: "queued" | "inventory" | "transferring" | "verifying" | "complete" | "failed"; phase: string; folders_total: number; folders_complete: number; files_total: number; files_complete: number; versions_total: number; versions_complete: number; bytes_total: number; bytes_complete: number; attempts: number; last_error: string | null; updated_at: string };
+type MigrationFolder = { source_folder_id: string; name: string; size_bytes: number; job: MigrationJob | null };
 type RootRow = { id: string; name: string; path: string; kind: "folder" | "file"; size_bytes: number; state: "pending" | "ready"; created_at: string };
 type RootVersion = { id: string; version_label: string; name: string; size_bytes: number; source_modified_at: string | null; uploaded_at: string | null; current: boolean };
 type Edit = { kind: "file"; action: "edit" | "trash" | "restore"; file: FileRow } | { kind: "folder"; action: "create" | "rename" | "remove"; folder?: FolderRow };
@@ -72,12 +74,70 @@ function DrivePicker({ selected, onChange }: { selected: Drive | null; onChange:
   </fieldset>;
 }
 
-function DataViews({ view, onNavigate }: { view: View | "root"; onNavigate?: () => void }) {
-  return <nav className={styles.tabs} aria-label="Data views">{([{ key: "root", label: "Company root", icon: Folder }, { key: "files", label: "Files", icon: File }, { key: "folders", label: "Folders", icon: Folder }, { key: "trash", label: "Trash", icon: Trash2 }, { key: "activity", label: "Activity", icon: History }] as const).map(tab => <Link key={tab.key} href={`/company/admin/data?view=${tab.key}`} scroll={false} aria-current={view === tab.key ? "page" : undefined} onNavigate={onNavigate}><tab.icon size={16} />{tab.label}</Link>)}</nav>;
+function DataViews({ view, onNavigate }: { view: View | "root" | "migration"; onNavigate?: () => void }) {
+  return <nav className={styles.tabs} aria-label="Data views">{([{ key: "root", label: "Company root", icon: Folder }, { key: "migration", label: "Migration", icon: ArrowRightLeft }, { key: "files", label: "Files", icon: File }, { key: "folders", label: "Folders", icon: Folder }, { key: "trash", label: "Trash", icon: Trash2 }, { key: "activity", label: "Activity", icon: History }] as const).map(tab => <Link key={tab.key} href={`/company/admin/data?view=${tab.key}`} scroll={false} aria-current={view === tab.key ? "page" : undefined} onNavigate={onNavigate}><tab.icon size={16} />{tab.label}</Link>)}</nav>;
 }
 
-export default function DataManager({ view, folder }: { view: View | "root"; folder: string }) {
-  return view === "root" ? <CompanyRoot key={folder} folder={folder} /> : <DriveDataManager view={view} />;
+export default function DataManager({ view, folder }: { view: View | "root" | "migration"; folder: string }) {
+  return view === "root" ? <CompanyRoot key={folder} folder={folder} /> : view === "migration" ? <MigrationManager /> : <DriveDataManager view={view} />;
+}
+
+function MigrationManager() {
+  const [revision, setRevision] = useState(0);
+  const [busy, setBusy] = useState("");
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const state = useResource<{ items: MigrationFolder[] }>(`${base}/migration`, true, revision);
+  const active = state.data?.items.some(folder => folder.job && !["complete", "failed"].includes(folder.job.status));
+  useEffect(() => {
+    if (!active) return;
+    const timer = window.setInterval(() => setRevision(value => value + 1), 15000);
+    return () => window.clearInterval(timer);
+  }, [active]);
+  async function run(folder: MigrationFolder) {
+    if (busy) return;
+    setBusy(folder.source_folder_id); setError(""); setNotice("");
+    try {
+      if (folder.job?.status === "failed") await teamRequest(`${base}/migration/jobs/${folder.job.id}/retry`, {});
+      else await teamRequest(`${base}/migration/jobs`, { source_folder_id: folder.source_folder_id });
+      setNotice(folder.job?.status === "failed" ? `${folder.name} queued to resume.` : `${folder.name} migration queued.`);
+      setRevision(value => value + 1);
+    } catch (failure) { setError(failure instanceof Error ? failure.message : "Unable to queue migration."); }
+    finally { setBusy(""); }
+  }
+  function progress(job: MigrationJob) {
+    if (job.status === "complete") return 100;
+    if (job.bytes_total) return Math.min(99, Math.floor(job.bytes_complete * 100 / job.bytes_total));
+    const complete = job.folders_complete + job.files_complete + job.versions_complete;
+    const total = job.folders_total + job.files_total + job.versions_total;
+    return total ? Math.min(99, Math.floor(complete * 100 / total)) : 0;
+  }
+  function details(job: MigrationJob) {
+    return `${job.folders_complete}/${job.folders_total} folders, ${job.files_complete}/${job.files_total} files, ${job.versions_complete}/${job.versions_total} versions, ${bytes(job.bytes_complete)}/${bytes(job.bytes_total)}`;
+  }
+  function action(folder: MigrationFolder) {
+    const job = folder.job;
+    if (job?.status === "complete") return <span className={styles.complete}>Verified</span>;
+    if (job && job.status !== "failed") return <span className={styles.running}>{job.phase}</span>;
+    return <button className={shared.primary} disabled={!!busy} onClick={() => void run(folder)}><ArrowRightLeft size={16} />{busy === folder.source_folder_id ? "Queuing..." : job?.status === "failed" ? "Retry" : "Migrate"}</button>;
+  }
+  return <section className={`${shared.section} ${styles.section}`}>
+    <div className={styles.heading}><h1>Data Administration</h1><button className={shared.iconButton} title="Refresh" aria-label="Refresh migration status" onClick={() => setRevision(value => value + 1)}><RefreshCw size={18} /></button></div>
+    <DataViews view="migration" />
+    {notice && <p className={shared.notice} role="status">{notice}</p>}
+    {error && <p className={shared.formError} role="alert">{error}</p>}
+    <LoadState loading={state.loading} error={state.error} retry={() => setRevision(value => value + 1)} />
+    {state.data && !state.data.items.length && <div className={shared.empty}><Folder size={30} /><h2>No folders found in Zoho Mikan</h2></div>}
+    {!!state.data?.items.length && <div className={styles.migrationList}>{state.data.items.map(folder => {
+      const job = folder.job; const percent = job ? progress(job) : 0;
+      return <article className={styles.migrationItem} key={folder.source_folder_id}>
+        <div className={styles.migrationMain}><span className={styles.migrationIcon}><Folder size={20} /></span><div><h2>{folder.name}</h2><p>{job ? details(job) : folder.size_bytes ? `${bytes(folder.size_bytes)} in Zoho` : "Ready to migrate"}</p></div></div>
+        {job && <div className={styles.progress} aria-label={`${folder.name} migration ${percent}%`}><span style={{ width: `${percent}%` }} /></div>}
+        <div className={styles.migrationStatus}><span className={styles.badge} data-state={job?.status || "ready"}>{job ? job.status : "Not migrated"}</span>{action(folder)}</div>
+        {job?.last_error && <p className={styles.migrationError} role="status">{job.last_error}</p>}
+      </article>;
+    })}</div>}
+  </section>;
 }
 
 function RootVersions({ file, close }: { file: RootRow; close: () => void }) {

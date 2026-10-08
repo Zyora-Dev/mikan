@@ -64,6 +64,22 @@
 .retentionToggle input { width: 17px; height: 17px; accent-color: #087c50; }
 .retention > label:not(.retentionToggle) { width: 150px; max-width: 100%; }
 .badge[data-state=purging], .table .badge[data-state=purging] { background: #fff4d8; color: #704714; }
+.badge[data-state=queued], .badge[data-state=inventory], .badge[data-state=transferring], .badge[data-state=verifying] { background: #fff4d8; color: #704714; }
+.badge[data-state=complete] { background: #e3f5ea; color: #075d39; }
+.badge[data-state=failed] { background: #fcecf0; color: #942239; }
+.migrationList { display: grid; gap: 12px; }
+.migrationItem { display: grid; grid-template-columns: minmax(240px,1fr) minmax(180px,0.8fr) auto; align-items: center; gap: 20px; padding: 18px 20px; border: 1px solid #bdcdc2; border-radius: 6px; background: #fff; }
+.migrationMain { display: flex; align-items: center; gap: 13px; min-width: 0; }
+.migrationIcon { display: grid; place-items: center; width: 38px; height: 38px; flex: 0 0 38px; border-radius: 6px; background: #e8f1eb; color: #086740; }
+.migrationMain h2 { margin: 0; color: #18251f; font-size: 14px; overflow-wrap: anywhere; }
+.migrationMain p { margin: 5px 0 0; color: #3c5144; font-size: 12px; overflow-wrap: anywhere; }
+.progress { height: 7px; overflow: hidden; border-radius: 4px; background: #dce6df; }
+.progress span { display: block; height: 100%; min-width: 0; background: #087c50; transition: width 240ms ease; }
+.migrationStatus { display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-width: 190px; }
+.migrationStatus > button { min-width: 106px; }
+.running, .complete { color: #274638; font-size: 12px; font-weight: 600; }
+.complete { color: #075d39; }
+.migrationError { grid-column: 1 / -1; margin: -6px 0 0 51px; color: #942239; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .picker { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; gap: 12px; }
 .picker legend { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
 .picker > input { width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid #bdcdc2; border-radius: 5px; font: inherit; font-size: 13px; color: #18251f; }
@@ -73,5 +89,6 @@
 .picker li span { min-width: 0; overflow-wrap: anywhere; }
 .picker strong { font-size: 13px; }
 .picker small { display: block; font-size: 12px; color: #3c5144; margin-top: 4px; }
-@media(max-width:850px) { .section { padding: 22px; } .desktop { display: none; } .mobile { display: grid; gap: 14px; } }
+@media(max-width:850px) { .section { padding: 22px; } .desktop { display: none; } .mobile { display: grid; gap: 14px; } .migrationItem { grid-template-columns: 1fr auto; } .progress { grid-column: 1 / -1; grid-row: 2; } }
+@media(max-width:600px) { .migrationItem { grid-template-columns: 1fr; gap: 14px; padding: 16px; } .progress { grid-column: 1; grid-row: auto; } .migrationStatus { min-width: 0; justify-content: space-between; } .migrationError { margin-left: 0; } }
 @media(max-width:480px) { .section { padding: 20px 16px; } .heading h1 { font-size: 22px; } .tabs { gap: 0; } .tabs a { padding: 10px; } }

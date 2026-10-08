@@ -9,6 +9,6 @@ export default async function DataPage({ searchParams }: { searchParams: Promise
   const admin = await getCompanyAdmin();
   if (!admin) redirect("/company/admin/login");
   const { view: requestedView, folder } = await searchParams;
-  const view = requestedView === "files" || requestedView === "folders" || requestedView === "trash" || requestedView === "activity" ? requestedView : "root";
+  const view = requestedView === "files" || requestedView === "folders" || requestedView === "trash" || requestedView === "activity" || requestedView === "migration" ? requestedView : "root";
   return <CompanyWorkspace admin={admin} active="data"><DataManager view={view} folder={typeof folder === "string" ? folder : ""} /></CompanyWorkspace>;
 }

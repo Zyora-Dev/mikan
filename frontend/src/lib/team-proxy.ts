@@ -14,6 +14,8 @@ export async function teamProxy(request: NextRequest, path: string, scope: "comp
   const rootVersionContent = scope === "company" && new RegExp(`^data/root/files/${uuid}/versions/${uuid}/content$`, "i").test(path);
   const rootFileRead = scope === "company" && (new RegExp(`^data/root/files/${uuid}/content$`, "i").test(path) || rootVersionContent);
   const rootVersionsRead = scope === "company" && new RegExp(`^data/root/files/${uuid}/versions$`, "i").test(path);
+  const migrationRead = scope === "company" && path === "data/migration";
+  const migrationWrite = scope === "company" && (path === "data/migration/jobs" || new RegExp(`^data/migration/jobs/${uuid}/retry$`, "i").test(path));
   const filePreview = fileRead && scope !== "company" && path.endsWith("/preview");
   if (scope === "share" || (scope === "team" && (path === "files" || path.startsWith("files/"))) || (scope === "company" && path.startsWith("data/"))) {
     headers.set("Cache-Control", "private, no-store, max-age=0");
@@ -35,8 +37,8 @@ export async function teamProxy(request: NextRequest, path: string, scope: "comp
   const fileMultipart = scope === "team" && new RegExp(`^files/${uuid}/multipart(?:/complete)?$`, "i").test(path);
   const workflowRead = /^workflows(?:\/(?:options|runs|jobs|uploads|[1-9][0-9]*))?$/.test(path) || new RegExp(`^workflows/runs/${uuid}$`, "i").test(path);
   const workflowWrite = /^workflows(?:\/(?:validate|uploads|[1-9][0-9]*))?$/.test(path) || new RegExp(`^workflows/runs/${uuid}/cancel$`, "i").test(path) || new RegExp(`^workflows/jobs/${uuid}/retry$`, "i").test(path);
-  const companyRead = path === "" || path === "people" || path === "folders" || /^folders\/[1-9][0-9]*\/activity$/.test(path) || workflowRead || /^data\/(files|folders|activity|trash-settings|root)$/.test(path) || fileRead || rootFileRead || rootVersionsRead;
-  const companyWrite = path === "" || path === "invite" || /^people\/[1-9][0-9]*\/(edit|resend|disable|delete)$/.test(path) || /^[1-9][0-9]*\/delete$/.test(path) || /^folders\/[1-9][0-9]*$/.test(path) || workflowWrite || ["data/folders", "data/trash-settings", "data/root/folders"].includes(path) || new RegExp(`^data/files/${uuid}$`, "i").test(path);
+  const companyRead = path === "" || path === "people" || path === "folders" || /^folders\/[1-9][0-9]*\/activity$/.test(path) || workflowRead || /^data\/(files|folders|activity|trash-settings|root)$/.test(path) || migrationRead || fileRead || rootFileRead || rootVersionsRead;
+  const companyWrite = path === "" || path === "invite" || /^people\/[1-9][0-9]*\/(edit|resend|disable|delete)$/.test(path) || /^[1-9][0-9]*\/delete$/.test(path) || /^folders\/[1-9][0-9]*$/.test(path) || workflowWrite || ["data/folders", "data/trash-settings", "data/root/folders"].includes(path) || migrationWrite || new RegExp(`^data/files/${uuid}$`, "i").test(path);
   const teamRead = ["auth/me", "people", "dashboard", "storage", "files", "workflows", "workflows/files", "workflows/people", "workflows/runs", "workflows/notifications"].includes(path) || /^workflows\/[1-9][0-9]*$/.test(path) || new RegExp(`^workflows/runs/${uuid}$`, "i").test(path) || fileRead || sharingRead;
   const teamWrite = ["files/folders", "files/uploads", "auth/password", "auth/otp/request", "auth/otp/verify", "auth/recover", "auth/verification", "auth/activate", "auth/logout"].includes(path) || /^workflows\/[1-9][0-9]*\/submit$/.test(path) || /^workflows\/notifications\/[1-9][0-9]*\/read$/.test(path) || new RegExp(`^workflows/runs/${uuid}/(?:decide|cancel)$`, "i").test(path) || fileUpload || filePart || fileMultipart || sharingWrite;
   if (!["GET", "POST"].includes(request.method)) return fail("Not found.", 404);

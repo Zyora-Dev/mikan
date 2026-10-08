@@ -87,6 +87,25 @@ cd backend
 ../.venv/bin/python -m unittest test_zoho_authorize test_zoho_inventory -v
 ```
 
+## Reusable Zoho Folder Migration
+
+Company Admin > Data Administration > Migration lists live top-level folders
+under the configured Zoho Mikan root. An admin selects one folder and queues a
+durable background migration into Company Root. The worker preserves hierarchy,
+empty folders, current files and accessible normal/approved versions. It refuses
+collisions and publishes objects only after exact size and SHA-256 readback.
+
+Apply `migrations/027_zoho_migration_jobs.sql` exactly once after a current
+production database backup and before deploying backend code that registers the
+migration routes and worker. Migrations 025 and 026 are already applied in
+production and must not be replayed. Deploy the backend before the frontend,
+then verify service health and the Migration tab before starting a folder.
+Existing application Zoho credentials and storage settings are reused; do not
+commit or copy private credential/inventory files. The browser never receives
+provider credentials. Jobs are company-scoped, resumable and idempotent; use the
+displayed Retry action only for a failed job. Zoho source data is read-only.
+General is excluded from this selector and must remain untouched.
+
 ## General Import
 
 Deploy the Root visibility/API and frontend release first. Migration025 is
