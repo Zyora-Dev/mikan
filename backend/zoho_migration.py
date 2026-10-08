@@ -147,11 +147,12 @@ def inventory_folder(reader, source_id, root_name):
     items = []
     seen = set()
 
-    def visit(folder_id, parent_id, parent_path, expected_name=None):
-        metadata = reader.get(f'/files/{folder_id}').get('data', {})
+    def visit(metadata, parent_id, parent_path, expected_name=None):
+        folder_id = metadata.get('id')
         attributes = metadata.get('attributes', {})
         name = clean_name(attributes.get('name'))
-        if metadata.get('id') != folder_id or attributes.get('is_folder') is not True or (expected_name and name != expected_name):
+        if (not isinstance(folder_id, str) or not re.fullmatch(r'[A-Za-z0-9]+', folder_id)
+                or attributes.get('is_folder') is not True or (expected_name and name != expected_name)):
             raise InventoryError('Source folder identity changed during inventory.')
         path = f'{parent_path}/{name}' if parent_path else name
         if len(path) > 255 or folder_id in seen:
@@ -169,7 +170,7 @@ def inventory_folder(reader, source_id, root_name):
             child_id = record.get('id')
             child_name = clean_name(child_attributes.get('name'))
             if child_attributes.get('is_folder') is True:
-                visit(child_id, folder_id, path, child_name)
+                visit(record, folder_id, path, child_name)
                 continue
             if child_attributes.get('is_folder') is not False or child_attributes.get('is_zoho_file'):
                 raise InventoryError('Unsupported native document or unknown source resource.')
@@ -193,7 +194,11 @@ def inventory_folder(reader, source_id, root_name):
             )
             file_item['source_metadata']['current_version_id'] = current_version_id
             items.extend(historical)
-    visit(source_id, MIKAN_ROOT_ID, DESTINATION_ROOT, root_name)
+    roots = [record for record in children(reader, f'/teamfolders/{MIKAN_ROOT_ID}/files', 'folders')
+             if record.get('id') == source_id]
+    if len(roots) != 1:
+        raise InventoryError('Source folder is no longer uniquely present under Mikan.')
+    visit(roots[0], MIKAN_ROOT_ID, DESTINATION_ROOT, root_name)
     if len({(item['kind'], item['source_id']) for item in items}) != len(items):
         raise InventoryError('Repeated source item detected during inventory.')
     return items

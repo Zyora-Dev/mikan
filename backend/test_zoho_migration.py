@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from database import get_db
 from zoho_inventory import InventoryError
-from zoho_migration import MIKAN_ROOT_ID, MigrationDeferred, create_migration_router, current_entry, execute_job, historical_url, historical_versions, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_folder, transfer_item, try_lock_root, verify_ready_checkpoint
+from zoho_migration import MIKAN_ROOT_ID, MigrationDeferred, create_migration_router, current_entry, execute_job, historical_url, historical_versions, inventory_folder, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_folder, transfer_item, try_lock_root, verify_ready_checkpoint
 
 
 class Transaction:
@@ -35,6 +35,22 @@ class ZohoMigrationTests(unittest.TestCase):
             'name': '6. Lesson Learned', 'is_folder': True, 'storage_info': {'size_in_bytes': '421752'},
         }})
         self.assertEqual(folder, {'source_folder_id': 'folder123', 'name': '6. Lesson Learned', 'size_bytes': 421752})
+
+    @patch('zoho_migration.children')
+    def test_inventory_uses_folder_listing_metadata_without_direct_lookup(self, children):
+        root = {'id': 'project123', 'attributes': {'name': 'Project-2020', 'is_folder': True}}
+        children.side_effect = [[root], []]
+        reader = Mock()
+
+        items = inventory_folder(reader, 'project123', 'Project-2020')
+
+        self.assertEqual([(item['kind'], item['source_id']) for item in items], [('folder', 'project123')])
+        reader.get.assert_not_called()
+
+    @patch('zoho_migration.children', return_value=[])
+    def test_inventory_rejects_root_missing_from_mikan_listing(self, _children):
+        with self.assertRaisesRegex(InventoryError, 'no longer uniquely present under Mikan'):
+            inventory_folder(Mock(), 'project123', 'Project-2020')
 
     def test_normalized_current_entry_fields_override_raw_metadata(self):
         entry = current_entry({
