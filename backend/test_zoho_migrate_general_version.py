@@ -23,16 +23,17 @@ def exact_pdf():
 
 
 class HistoricalVersionSourceTests(unittest.TestCase):
-    def reader(self, content=None, status=200, download_url=None):
+    def reader(self, content=None, status=200, download_url=None, attributes=None):
         content = exact_pdf() if content is None else content
         download_url = download_url or f'https://download-accl.zoho.in/v1/workdrive/previewdata/{SOURCE_FILE_ID}?version=4017837000024806802'
+        attributes = attributes or {'preview_data_url': download_url, 'size': VERSION_SIZE}
 
         def handle(request):
             if request.method == 'POST':
                 return httpx.Response(200, json={'access_token': 'test-token', 'api_domain': 'https://www.zohoapis.in'})
             if request.url.host == 'www.zohoapis.in':
                 self.assertEqual(request.url.path, f'/workdrive/api/v1/versions/{SOURCE_VERSION_ID}/previewinfo')
-                return httpx.Response(200, json={'data': {'attributes': {'preview_data_url': download_url, 'size': VERSION_SIZE}}})
+                return httpx.Response(200, json={'data': {'attributes': attributes}})
             return httpx.Response(status, content=content)
 
         client = httpx.Client(transport=httpx.MockTransport(handle), follow_redirects=False)
@@ -64,6 +65,11 @@ class HistoricalVersionSourceTests(unittest.TestCase):
         reader = self.reader()
         with self.assertRaises(InventoryError):
             reader.version_preview_info('../other')
+        self.assertIsInstance(historical_url(reader), httpx.URL)
+
+    def test_formatted_preview_size_uses_verified_binary_length(self):
+        url = f'https://download-accl.zoho.in/v1/workdrive/previewdata/{SOURCE_FILE_ID}?version=4017837000024806802'
+        reader = self.reader(attributes={'preview_data_url': url, 'size': '503.56 KB'})
         self.assertIsInstance(historical_url(reader), httpx.URL)
 
 

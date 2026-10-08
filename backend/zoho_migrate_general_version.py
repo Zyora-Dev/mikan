@@ -36,9 +36,10 @@ def historical_url(reader):
             or url.userinfo or url.fragment or url.path != f'/v1/workdrive/previewdata/{SOURCE_FILE_ID}'
             or not url.params.get('version')):
         raise InventoryError('Unverified historical download URL; credentials were not sent.')
-    reported_size = attributes.get('size') or attributes.get('file_size') or attributes.get('size_in_bytes')
-    if reported_size is not None and int(reported_size) != VERSION_SIZE:
-        raise InventoryError('Historical source size changed; migration stopped.')
+    reported_size = attributes.get('file_size') or attributes.get('size')
+    if isinstance(reported_size, int) or (isinstance(reported_size, str) and reported_size.isdigit()):
+        if int(reported_size) != VERSION_SIZE:
+            raise InventoryError('Historical source size changed; migration stopped.')
     return url
 
 
