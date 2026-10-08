@@ -485,18 +485,28 @@ def historical_url(_reader, item):
 
 
 def download_historical(reader, item, output):
-    digest = hashlib.sha256()
-    length = 0
-    with reader.client.stream('GET', historical_url(reader, item), follow_redirects=False,
-            headers={'Authorization': f'Zoho-oauthtoken {reader.access_token}', 'Accept-Encoding': 'identity'}) as response:
-        if response.status_code != 200 or 'location' in response.headers:
-            raise InventoryError(f'Zoho historical download HTTP {response.status_code}; migration stopped.')
-        for chunk in response.iter_bytes(1024 * 1024):
-            length += len(chunk)
-            if length > item['size_bytes']:
-                raise InventoryError('Historical source exceeds its inventoried size.')
-            output.write(chunk)
-            digest.update(chunk)
+    url = historical_url(reader, item)
+    if not reader.access_token or time.monotonic() >= reader.expires_at:
+        reader.refresh()
+    for attempt in range(2):
+        digest = hashlib.sha256()
+        length = 0
+        output.seek(0)
+        output.truncate()
+        with reader.client.stream('GET', url, follow_redirects=False,
+                headers={'Authorization': f'Zoho-oauthtoken {reader.access_token}', 'Accept-Encoding': 'identity'}) as response:
+            if response.status_code == 401 and not attempt:
+                reader.refresh()
+                continue
+            if response.status_code != 200 or 'location' in response.headers:
+                raise InventoryError(f'Zoho historical download HTTP {response.status_code}; migration stopped.')
+            for chunk in response.iter_bytes(1024 * 1024):
+                length += len(chunk)
+                if length > item['size_bytes']:
+                    raise InventoryError('Historical source exceeds its inventoried size.')
+                output.write(chunk)
+                digest.update(chunk)
+        break
     if length != item['size_bytes']:
         raise InventoryError('Historical source size mismatch.')
     output.seek(0)

@@ -1,4 +1,6 @@
+import hashlib
 import unittest
+from io import BytesIO
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
@@ -7,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from database import get_db
 from zoho_inventory import InventoryError
-from zoho_migration import MIKAN_ROOT_ID, MigrationDeferred, create_migration_router, current_entry, exact_source_size, execute_job, historical_url, historical_versions, inventory_folder, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_folder, transfer_item, try_lock_root, verify_ready_checkpoint
+from zoho_migration import MIKAN_ROOT_ID, MigrationDeferred, create_migration_router, current_entry, download_historical, exact_source_size, execute_job, historical_url, historical_versions, inventory_folder, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_folder, transfer_item, try_lock_root, verify_ready_checkpoint
 
 
 class Transaction:
@@ -158,6 +160,71 @@ class ZohoMigrationTests(unittest.TestCase):
 
         with self.assertRaisesRegex(InventoryError, 'credentials were not sent'):
             historical_url(Mock(), item)
+
+    def test_historical_download_refreshes_once_after_unauthorized_token(self):
+        reader = Mock(access_token='expired', expires_at=float('inf'))
+        unauthorized = Mock(status_code=401, headers={})
+        unauthorized.__enter__ = Mock(return_value=unauthorized)
+        unauthorized.__exit__ = Mock(return_value=False)
+        successful = Mock(status_code=200, headers={})
+        successful.iter_bytes.return_value = [b'fresh bytes']
+        successful.__enter__ = Mock(return_value=successful)
+        successful.__exit__ = Mock(return_value=False)
+        reader.client.stream.side_effect = [unauthorized, successful]
+        reader.refresh.side_effect = lambda: setattr(reader, 'access_token', 'fresh')
+        output = BytesIO(b'stale bytes')
+        item = {
+            'source_file_id': 'file123', 'source_version_id': 'file123-456',
+            'version_label': '1.0', 'size_bytes': 11,
+        }
+
+        digest = download_historical(reader, item, output)
+
+        self.assertEqual(digest, hashlib.sha256(b'fresh bytes').hexdigest())
+        self.assertEqual(output.read(), b'fresh bytes')
+        self.assertEqual(reader.refresh.call_count, 1)
+        self.assertEqual(reader.client.stream.call_args_list[1].kwargs['headers']['Authorization'],
+                         'Zoho-oauthtoken fresh')
+
+    def test_historical_download_refreshes_expired_token_before_streaming(self):
+        reader = Mock(access_token='expired', expires_at=0)
+        successful = Mock(status_code=200, headers={})
+        successful.iter_bytes.return_value = [b'fresh bytes']
+        successful.__enter__ = Mock(return_value=successful)
+        successful.__exit__ = Mock(return_value=False)
+        reader.client.stream.return_value = successful
+        reader.refresh.side_effect = lambda: setattr(reader, 'access_token', 'fresh')
+        item = {
+            'source_file_id': 'file123', 'source_version_id': 'file123-456',
+            'version_label': '1.0', 'size_bytes': 11,
+        }
+
+        download_historical(reader, item, BytesIO())
+
+        reader.refresh.assert_called_once_with()
+        self.assertEqual(reader.client.stream.call_args.kwargs['headers']['Authorization'],
+                         'Zoho-oauthtoken fresh')
+
+    def test_historical_download_stops_after_second_unauthorized_response(self):
+        reader = Mock(access_token='expired', expires_at=float('inf'))
+        responses = []
+        for _attempt in range(2):
+            response = Mock(status_code=401, headers={})
+            response.__enter__ = Mock(return_value=response)
+            response.__exit__ = Mock(return_value=False)
+            responses.append(response)
+        reader.client.stream.side_effect = responses
+        reader.refresh.side_effect = lambda: setattr(reader, 'access_token', 'fresh')
+        item = {
+            'source_file_id': 'file123', 'source_version_id': 'file123-456',
+            'version_label': '1.0', 'size_bytes': 11,
+        }
+
+        with self.assertRaisesRegex(InventoryError, 'HTTP 401'):
+            download_historical(reader, item, BytesIO())
+
+        self.assertEqual(reader.refresh.call_count, 1)
+        self.assertEqual(reader.client.stream.call_count, 2)
 
     def test_version_inventory_excludes_current_and_preserves_older_and_approved(self):
         file_item = {'source_id': 'file123', 'source_parent_id': 'folder123', 'source_name': 'Plan.pdf',
