@@ -15,7 +15,7 @@ export async function teamProxy(request: NextRequest, path: string, scope: "comp
   const rootFileRead = scope === "company" && (new RegExp(`^data/root/files/${uuid}/content$`, "i").test(path) || rootVersionContent);
   const rootVersionsRead = scope === "company" && new RegExp(`^data/root/files/${uuid}/versions$`, "i").test(path);
   const migrationRead = scope === "company" && path === "data/migration";
-  const migrationWrite = scope === "company" && (path === "data/migration/jobs" || new RegExp(`^data/migration/jobs/${uuid}/retry$`, "i").test(path));
+  const migrationWrite = scope === "company" && (["data/migration/jobs", "data/migration/jobs/batch"].includes(path) || new RegExp(`^data/migration/jobs/${uuid}/retry$`, "i").test(path));
   const filePreview = fileRead && scope !== "company" && path.endsWith("/preview");
   if (scope === "share" || (scope === "team" && (path === "files" || path.startsWith("files/"))) || (scope === "company" && path.startsWith("data/"))) {
     headers.set("Cache-Control", "private, no-store, max-age=0");

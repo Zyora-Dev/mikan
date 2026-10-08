@@ -471,6 +471,39 @@ class ZohoMigrationTests(unittest.TestCase):
                       if 'INSERT INTO zoho_migration_job' in call.args[0])
         self.assertEqual(insert.args[1][-1], 'Mikan/Whiteboards')
 
+    @patch('zoho_migration.list_source_folders', return_value=[
+        {'source_folder_id': 'office123', 'name': '1. Office', 'size_bytes': 1000},
+        {'source_folder_id': 'training123', 'name': '7. Training', 'size_bytes': 2000},
+    ])
+    def test_batch_start_queues_distinct_jobs_in_selection_order(self, _folders):
+        office = {'id': uuid4(), 'source_folder_id': 'office123', 'status': 'queued'}
+        training = {'id': uuid4(), 'source_folder_id': 'training123', 'status': 'queued'}
+        connection = Mock()
+        connection.transaction.return_value = Transaction()
+        results = iter((None, office, None, training))
+        connection.execute.return_value.fetchone.side_effect = lambda: next(results)
+
+        with TestClient(self.app(connection)) as client:
+            response = client.post('/company/teams/data/migration/jobs/batch', json={
+                'source_folder_ids': ['office123', 'training123'],
+            })
+
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual([item['source_folder_id'] for item in response.json()['items']], ['office123', 'training123'])
+        inserts = [call for call in connection.execute.call_args_list if 'INSERT INTO zoho_migration_job' in call.args[0]]
+        self.assertEqual([call.args[1][-1] for call in inserts], ['Mikan/1. Office', 'Mikan/7. Training'])
+
+    @patch('zoho_migration.list_source_folders', return_value=[])
+    def test_batch_start_rejects_duplicate_ids_without_database_writes(self, _folders):
+        connection = Mock()
+        with TestClient(self.app(connection)) as client:
+            response = client.post('/company/teams/data/migration/jobs/batch', json={
+                'source_folder_ids': ['office123', 'office123'],
+            })
+
+        self.assertEqual(response.status_code, 422, response.text)
+        connection.execute.assert_not_called()
+
     def test_retry_is_tenant_scoped_and_failed_only(self):
         connection = Mock()
         connection.transaction.return_value = Transaction()

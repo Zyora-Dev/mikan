@@ -1,5 +1,11 @@
 # Mikan Progress
 
+## Multi-Folder Migration Queue - 2026-10-08 (Local Verified)
+- Added an origin-protected atomic batch queue endpoint for 1-25 distinct Zoho folders. It validates every selected folder from one live Mikan listing before opening the database transaction, rejects the whole selection if any source is invalid, reuses existing jobs idempotently and creates only missing durable jobs under `Company Root/Mikan/<folder>`.
+- The Migration screen now supports checkbox selection of unmigrated folders and a single `Migrate selected` command. Existing active, completed and failed jobs remain non-selectable; individual migration and retry controls remain available. The Next.js company proxy explicitly permits only the exact batch route.
+- Processing intentionally remains serial: the established worker claims one queued job and transfers one file/version at a time, preserving current OAuth reuse, temporary-disk bounds, immutable object writes, SHA-256 readback, destination identity checks and resumability. This release does not add multipart transfer, parallel downloads or require a Render compute/disk change.
+- PASS all 40 focused migration tests, targeted frontend ESLint, edited-file diagnostics and patch whitespace validation. No production deployment, migration click or Render configuration change performed.
+
 ## PROJECT UPDATES OAuth Blocker Audit - 2026-10-08 (Local Verified)
 - Root cause of the stop at 445/901 historical versions was OAuth token issuance exhaustion: the 15-second Migration-screen poll created a fresh WorkDrive reader and requested another access token even while the durable job was active. Active `queued`, `inventory`, `transferring`, and `verifying` responses now come entirely from `zoho_migration_job`; they do not contact Zoho. Idle source browsing and new-job validation still use live source discovery. The worker continues to use one reader/access token per execution and refreshes only before expiry or once after HTTP 401.
 - OAuth token issuance failures are now classified separately from WorkDrive API failures. Zoho's documented `Access Denied` throttle response produces a sanitized wait-at-least-10-minutes message with no automatic retry; generic token errors remain sanitized and are not misclassified. Provider response bodies, credentials, and token values are never exposed.

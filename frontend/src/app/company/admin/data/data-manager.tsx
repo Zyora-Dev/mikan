@@ -104,6 +104,7 @@ export default function DataManager({ view, folder }: { view: View | "root" | "m
 function MigrationManager() {
   const [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState("");
+  const [selected, setSelected] = useState<string[]>([]);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const state = useResource<MigrationData>(`${base}/migration`, true, revision);
@@ -122,6 +123,16 @@ function MigrationManager() {
       setNotice(folder.job?.status === "failed" ? `${folder.name} queued to resume.` : `${folder.name} migration queued.`);
       setRevision(value => value + 1);
     } catch (failure) { setError(failure instanceof Error ? failure.message : "Unable to queue migration."); }
+    finally { setBusy(""); }
+  }
+  async function runSelected() {
+    if (busy || !selected.length) return;
+    setBusy("batch"); setError(""); setNotice("");
+    try {
+      await teamRequest(`${base}/migration/jobs/batch`, { source_folder_ids: selected });
+      setNotice(`${selected.length} folder${selected.length === 1 ? "" : "s"} queued for migration.`);
+      setSelected([]); setRevision(value => value + 1);
+    } catch (failure) { setError(failure instanceof Error ? failure.message : "Unable to queue selected migrations."); }
     finally { setBusy(""); }
   }
   function progress(job: MigrationJob) {
@@ -143,6 +154,7 @@ function MigrationManager() {
   return <section className={`${shared.section} ${styles.section}`}>
     <div className={styles.heading}><h1>Data Administration</h1><button className={shared.iconButton} title="Refresh" aria-label="Refresh migration status" onClick={() => setRevision(value => value + 1)}><RefreshCw size={18} /></button></div>
     <DataViews view="migration" />
+    {!!selected.length && <div className={styles.migrationSelection} role="status"><span>{selected.length} folder{selected.length === 1 ? "" : "s"} selected</span><button className={shared.primary} disabled={!!busy} onClick={() => void runSelected()}><ArrowRightLeft size={16} />{busy === "batch" ? "Queuing..." : "Migrate selected"}</button><button className={shared.secondary} disabled={!!busy} onClick={() => setSelected([])}>Clear</button></div>}
     {notice && <p className={shared.notice} role="status">{notice}</p>}
     {error && <p className={shared.formError} role="alert">{error}</p>}
     <LoadState loading={state.loading} error={state.error} retry={() => setRevision(value => value + 1)} />
@@ -151,7 +163,7 @@ function MigrationManager() {
     {!!state.data?.items.length && <div className={styles.migrationList}>{state.data.items.map(folder => {
       const job = folder.job; const percent = job ? progress(job) : 0;
       return <article className={styles.migrationItem} key={folder.source_folder_id}>
-        <div className={styles.migrationMain}><span className={styles.migrationIcon}><Folder size={20} /></span><div><h2>{folder.name}</h2><p>{job ? details(job) : folder.size_bytes ? `${bytes(folder.size_bytes)} in Zoho` : "Ready to migrate"}</p>{job && <small>Attempt {job.attempts} / Updated {dateTime(job.updated_at)}</small>}</div></div>
+        <div className={styles.migrationMain}>{!job && <input className={styles.migrationCheck} type="checkbox" aria-label={`Select ${folder.name}`} checked={selected.includes(folder.source_folder_id)} disabled={!!busy} onChange={event => setSelected(current => event.target.checked ? [...current, folder.source_folder_id] : current.filter(value => value !== folder.source_folder_id))} />}<span className={styles.migrationIcon}><Folder size={20} /></span><div><h2>{folder.name}</h2><p>{job ? details(job) : folder.size_bytes ? `${bytes(folder.size_bytes)} in Zoho` : "Ready to migrate"}</p>{job && <small>Attempt {job.attempts} / Updated {dateTime(job.updated_at)}</small>}</div></div>
         {job && <div className={styles.progress} aria-label={`${folder.name} migration ${percent}%`}><span style={{ width: `${percent}%` }} /></div>}
         <div className={styles.migrationStatus}><span className={styles.badge} data-state={job?.status || "ready"}>{job ? job.status : "Not migrated"}</span>{action(folder)}</div>
         {job?.last_error && <p className={styles.migrationError} role="status">{job.last_error}</p>}

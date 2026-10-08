@@ -39,6 +39,11 @@ class MigrationStart(BaseModel):
     source_folder_id: str = Field(pattern=r'^[A-Za-z0-9]+$', min_length=1, max_length=200)
 
 
+class MigrationBatchStart(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    source_folder_ids: list[str] = Field(min_length=1, max_length=25)
+
+
 def exact_nonnegative_integer(*values):
     for value in values:
         if isinstance(value, bool) or value is None:
@@ -726,6 +731,36 @@ def create_migration_router(company_dependency, origin_dependency):
                  f"{DESTINATION_ROOT}/{folder['name']}"),
             ).fetchone()
         return job_dict(job)
+
+    @router.post('/jobs/batch', status_code=202, dependencies=[Depends(origin_dependency)])
+    def start_migrations(payload: MigrationBatchStart, admin=Depends(company_dependency), connection=Depends(get_db)):
+        source_ids = list(dict.fromkeys(payload.source_folder_ids))
+        if len(source_ids) != len(payload.source_folder_ids) or any(not re.fullmatch(r'[A-Za-z0-9]{1,200}', value) for value in source_ids):
+            raise HTTPException(422, 'Select distinct valid Zoho folders.')
+        try:
+            folders = {folder['source_folder_id']: folder for folder in list_source_folders()}
+        except (InventoryError, httpx.HTTPError, OSError, ValueError) as error:
+            raise HTTPException(503, 'Zoho folders are temporarily unavailable.') from error
+        missing = [source_id for source_id in source_ids if source_id not in folders]
+        if missing:
+            raise HTTPException(404, 'One or more selected Zoho folders were not found under Mikan.')
+        jobs = []
+        with connection.transaction():
+            for source_id in source_ids:
+                existing = select_job(connection, admin['company_id'], source_id)
+                if existing:
+                    jobs.append(job_dict(existing))
+                    continue
+                folder = folders[source_id]
+                job = connection.execute(
+                    f'''INSERT INTO zoho_migration_job
+                        (company_id,source_root_id,source_folder_id,source_folder_name,destination_path)
+                        VALUES (%s,%s,%s,%s,%s) RETURNING {JOB_COLUMNS}''',
+                    (admin['company_id'], MIKAN_ROOT_ID, source_id, folder['name'],
+                     f"{DESTINATION_ROOT}/{folder['name']}"),
+                ).fetchone()
+                jobs.append(job_dict(job))
+        return {'items': jobs}
 
     @router.post('/jobs/{identifier}/retry', status_code=202, dependencies=[Depends(origin_dependency)])
     def retry_migration(identifier: UUID, admin=Depends(company_dependency), connection=Depends(get_db)):
