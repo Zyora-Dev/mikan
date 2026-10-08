@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { LoaderCircle, Trash2, X } from "lucide-react";
 import styles from "./companies/companies.module.css";
 
-export default function DeleteRecord({ name, endpoint, onDeleted, method = "DELETE" }: { name: string; endpoint: string; onDeleted: () => void; method?: "DELETE" | "POST" }) {
+export default function DeleteRecord({ name, endpoint, onDeleted, method = "DELETE", loginPath = "/admin/login" }: { name: string; endpoint: string; onDeleted: () => void; method?: "DELETE" | "POST"; loginPath?: string }) {
   const router = useRouter();
   const dialog = useRef<HTMLDialogElement>(null);
   const [confirmation, setConfirmation] = useState("");
@@ -16,7 +16,7 @@ export default function DeleteRecord({ name, endpoint, onDeleted, method = "DELE
     setBusy(true); setError("");
     try {
       const response = await fetch(endpoint, { method, headers: { "Content-Type": "application/json" }, body: "{}", signal: AbortSignal.timeout(25000) });
-      if (response.status === 401) { router.replace("/admin/login"); return; }
+      if (response.status === 401) { router.replace(loginPath); return; }
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Unable to delete this record.");
       dialog.current?.close(); onDeleted();

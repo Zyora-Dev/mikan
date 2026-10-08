@@ -7,7 +7,7 @@ export async function adminManagementProxy(request: NextRequest, path: string) {
   const numeric = "[1-9][0-9]{0,18}";
   const teams = new RegExp(`^/admin/management/companies/${numeric}/teams$`).test(path);
   const people = new RegExp(`^/admin/management/companies/${numeric}/teams/people$`).test(path);
-  const action = new RegExp(`^/admin/management/companies/${numeric}/teams/(invite|people/${numeric}/(edit|resend|disable|delete))$`).test(path);
+  const action = new RegExp(`^/admin/management/companies/${numeric}/teams/(invite|${numeric}/delete|people/${numeric}/(edit|resend|disable|delete))$`).test(path);
   const admin = new RegExp(`^/company-admins/${numeric}$`).test(path);
   const clear = /^\/admin\/management\/clear\/(preview|execute)$/.test(path);
   const allowed = request.method === "GET" ? teams || people : request.method === "POST" ? teams || action || clear : ["PUT", "DELETE"].includes(request.method) && admin;

@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
-from psycopg.errors import UniqueViolation
+from psycopg.errors import ForeignKeyViolation, UniqueViolation
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, SecretStr, field_validator, model_validator
 
 from database import get_db
@@ -392,6 +392,34 @@ def create_team_router(company_dependency, origin_dependency, super_dependency=N
             connection.execute(f"DELETE FROM {table} WHERE account_id = %s", (account_id,))
         return {"detail": "Access revoked and pending verification links cancelled."}
 
+    @router.post('/company/teams/people/{account_id}/delete', dependencies=mutation)
+    def delete_person(account_id: int, connection=Depends(get_db, scope="function"), admin=Depends(company_dependency)):
+        try:
+            with connection.transaction():
+                removed = connection.execute('DELETE FROM team_account WHERE id=%s AND company_id=%s RETURNING id,name', (account_id, admin['company_id'])).fetchone()
+                if not removed:
+                    raise HTTPException(404, 'Member not found.')
+                connection.execute("INSERT INTO data_activity(company_id,actor,action,subject,detail) VALUES (%s,%s,'member_delete',%s,%s)",
+                    (admin['company_id'], admin['name'], removed['name'], f'Member {account_id} deleted.'))
+        except ForeignKeyViolation as error:
+            raise HTTPException(409, 'This member has files, folders or workflow records. Revoke access to preserve their data.') from error
+        return {'detail': 'Member deleted.'}
+
+    @router.post('/company/teams/{team_id}/delete', dependencies=mutation)
+    def delete_team(team_id: int, connection=Depends(get_db, scope="function"), admin=Depends(company_dependency)):
+        try:
+            with connection.transaction():
+                team = connection.execute('SELECT id,name FROM team WHERE id=%s AND company_id=%s FOR UPDATE', (team_id, admin['company_id'])).fetchone()
+                if not team:
+                    raise HTTPException(404, 'Team not found.')
+                connection.execute('DELETE FROM team_folder_activity WHERE team_id=%s AND company_id=%s', (team_id, admin['company_id']))
+                connection.execute('DELETE FROM team WHERE id=%s AND company_id=%s', (team_id, admin['company_id']))
+                connection.execute("INSERT INTO data_activity(company_id,actor,action,subject,detail) VALUES (%s,%s,'team_delete',%s,%s)",
+                    (admin['company_id'], admin['name'], team['name'], f'Team {team_id} deleted.'))
+        except ForeignKeyViolation as error:
+            raise HTTPException(409, 'This team still has members, files, folders or other dependent records. Remove or reassign members first; stored data will not be deleted.') from error
+        return {'detail': 'Team deleted.'}
+
     if super_dependency:
         def selected_company(company_id: int, admin=Depends(super_dependency), connection=Depends(get_db, scope="function")):
             if not connection.execute('SELECT id FROM company WHERE id=%s', (company_id,)).fetchone():
@@ -428,15 +456,11 @@ def create_team_router(company_dependency, origin_dependency, super_dependency=N
 
         @router.post('/admin/management/companies/{company_id}/teams/people/{account_id}/delete', dependencies=mutation)
         def super_delete(account_id: int, connection=Depends(get_db, scope="function"), admin=Depends(selected_company)):
-            from psycopg.errors import ForeignKeyViolation
-            try:
-                with connection.transaction():
-                    removed = connection.execute('DELETE FROM team_account WHERE id=%s AND company_id=%s RETURNING id', (account_id, admin['company_id'])).fetchone()
-                    if not removed:
-                        raise HTTPException(404, 'Member not found.')
-            except ForeignKeyViolation as error:
-                raise HTTPException(409, 'This member has files, folders or workflow records. Revoke access or use Clear Data with the required categories selected.') from error
-            return {'detail': 'Member deleted.'}
+            return delete_person(account_id, connection, admin)
+
+        @router.post('/admin/management/companies/{company_id}/teams/{team_id}/delete', dependencies=mutation)
+        def super_delete_team(team_id: int, connection=Depends(get_db, scope="function"), admin=Depends(selected_company)):
+            return delete_team(team_id, connection, admin)
 
     @router.post("/auth/team/verification", dependencies=mutation)
     def inspect_verification(payload: TokenInput, connection=Depends(get_db, scope="function")):

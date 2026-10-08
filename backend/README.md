@@ -42,7 +42,7 @@ Failures do not trigger automatic retries. A network failure can consume the
 code; a local save failure can leave the issued token unsaved. Resolve the
 reported problem before generating another code. Application code does not
 automatically load `.env.zoho`; importer and Render configuration are separate,
-pending work. Leave Zoho originals untouched.
+explicit steps. Leave Zoho originals untouched.
 
 Offline tests (no database or live Zoho access):
 
@@ -86,6 +86,40 @@ reconciliation before migration. Download/export permissions are not tested.
 cd backend
 ../.venv/bin/python -m unittest test_zoho_authorize test_zoho_inventory -v
 ```
+
+## General Import
+
+Deploy the Root visibility/API and frontend release first. Migration025 is
+already applied in production: do not replay it. There is no migration026.
+The standalone `zoho_migrate.py` imports General only into
+`Mikan Engineering Pvt Ltd / Company Root / General`, including empty folders
+and exact names. Mikan is excluded. Existing team allocations are not changed.
+
+Run the importer in a trusted runtime with production database/storage access,
+the application's dependencies and its existing `INTEGRATION_ENCRYPTION_KEY`.
+Privately set `MIKAN_MIGRATION_DATABASE_URL` to the production database URL;
+the importer never falls back to `DATABASE_URL` or a local database. Provision
+the saved inventory and owner-only Zoho credential file securely: neither is
+included in Git or automatically supplied by a Render deployment. Do not expose
+the private database publicly or paste credentials into chat.
+
+Using that runtime's Python executable, from the directory containing
+`zoho_migrate.py` (replace the two paths with the securely provisioned files):
+
+```sh
+python zoho_migrate.py --inventory /private/path/inventory.sqlite3 --check-destination
+python zoho_migrate.py --inventory /private/path/inventory.sqlite3 --credentials /private/path/.env.zoho --execute --confirm-company "Mikan Engineering Pvt Ltd" --backup-confirmed
+```
+
+Use `--backup-confirmed` only after confirming a current production database
+backup. The first command is read-only; the second copies files. Keep General
+unchanged during transfer. Temporary disk must accommodate the largest file
+plus 128 MiB; keep the runtime alive until completion. Each file is published
+only after exact size and full SHA256 object readback verification. Existing
+objects are never overwritten. On failure, stop and resolve the reported
+cause, then rerun the same command with the same inventory to resume. Do not
+delete pending records or objects. Completion is reported only after final
+source/destination reconciliation; Zoho originals remain unchanged.
 
 ## WhatsApp
 
