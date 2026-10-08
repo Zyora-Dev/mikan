@@ -481,6 +481,42 @@ class ZohoMigrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 409, response.text)
         self.assertEqual(connection.execute.call_args.args[1], (identifier, 7))
 
+    @patch('zoho_migration.list_source_folders')
+    def test_active_job_poll_uses_durable_progress_without_zoho_request(self, list_folders):
+        for status in ('queued', 'inventory', 'transferring', 'verifying'):
+            with self.subTest(status=status):
+                job = {
+                    'id': uuid4(), 'source_folder_id': 'updates123',
+                    'source_folder_name': 'PROJECT UPDATES', 'status': status,
+                    'bytes_total': 367800000,
+                }
+                connection = Mock()
+                connection.execute.return_value.fetchall.return_value = [job]
+
+                with TestClient(self.app(connection)) as client:
+                    response = client.get('/company/teams/data/migration')
+
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.json()['items'][0]['job']['status'], status)
+                self.assertFalse(response.json()['source_unavailable'])
+        list_folders.assert_not_called()
+
+    @patch('zoho_migration.list_source_folders', return_value=[])
+    def test_idle_job_poll_still_refreshes_live_source_folders(self, list_folders):
+        connection = Mock()
+        connection.execute.return_value.fetchall.return_value = [{
+            'id': uuid4(), 'source_folder_id': 'updates123',
+            'source_folder_name': 'PROJECT UPDATES', 'status': 'failed',
+            'bytes_total': 367800000,
+        }]
+
+        with TestClient(self.app(connection)) as client:
+            response = client.get('/company/teams/data/migration')
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertFalse(response.json()['source_unavailable'])
+        list_folders.assert_called_once_with()
+
     def test_legacy_destination_rebases_records_without_changing_ids(self):
         folder_id = uuid4()
         file_id = uuid4()

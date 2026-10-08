@@ -69,6 +69,37 @@ class WorkDriveReaderTests(unittest.TestCase):
                 WorkDriveReader(client, credentials).get('/teamfolders/abc')
         self.assertEqual(len(calls), 1)
 
+    def test_oauth_throttle_is_identified_without_an_automatic_retry(self):
+        calls = []
+        def handler(request):
+            calls.append(request)
+            return httpx.Response(400, json={
+                'error': 'Access Denied',
+                'error_description': 'You have made too many requests continuously.',
+            })
+        credentials = {'ZOHO_CLIENT_ID': 'fake-id', 'ZOHO_CLIENT_SECRET': 'fake-secret', 'ZOHO_REFRESH_TOKEN': 'fake-refresh'}
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            with self.assertRaisesRegex(InventoryError, 'access-token limit reached'):
+                WorkDriveReader(client, credentials).get('/teamfolders/abc')
+        self.assertEqual(len(calls), 1)
+
+    def test_generic_oauth_failure_is_sanitized_and_not_misclassified(self):
+        calls = []
+        def handler(request):
+            calls.append(request)
+            return httpx.Response(400, json={
+                'error': 'invalid_client',
+                'error_description': 'private-provider-detail',
+            })
+        credentials = {'ZOHO_CLIENT_ID': 'fake-id', 'ZOHO_CLIENT_SECRET': 'fake-secret', 'ZOHO_REFRESH_TOKEN': 'fake-refresh'}
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            with self.assertRaises(InventoryError) as raised:
+                WorkDriveReader(client, credentials).get('/teamfolders/abc')
+        self.assertEqual(len(calls), 1)
+        self.assertIn('OAuth token request returned HTTP 400', str(raised.exception))
+        self.assertNotIn('access-token limit', str(raised.exception))
+        self.assertNotIn('private-provider-detail', str(raised.exception))
+
 
 class InventoryTraversalTests(unittest.TestCase):
     def setUp(self):

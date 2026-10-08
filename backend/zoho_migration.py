@@ -687,6 +687,12 @@ def create_migration_router(company_dependency, origin_dependency):
             (admin['company_id'], MIKAN_ROOT_ID),
         ).fetchall()
         by_source = {row['source_folder_id']: job_dict(row) for row in jobs}
+        active = [row for row in jobs if row['status'] in ('queued', 'inventory', 'transferring', 'verifying')]
+        if active:
+            return {'items': [{
+                'source_folder_id': row['source_folder_id'], 'name': row['source_folder_name'],
+                'size_bytes': row['bytes_total'], 'job': job_dict(row),
+            } for row in jobs], 'source_unavailable': False}
         try:
             folders = list_source_folders()
         except (InventoryError, httpx.HTTPError, OSError, ValueError) as error:

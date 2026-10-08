@@ -26,9 +26,20 @@ class InventoryError(Exception):
     pass
 
 
-def response_json(response):
+def response_json(response, context='API request'):
     if response.status_code != 200:
-        raise InventoryError(f'Zoho returned HTTP {response.status_code}; no retry made. Response content hidden.')
+        if context == 'OAuth token request' and response.status_code == 400:
+            try:
+                payload = response.json()
+            except ValueError:
+                payload = None
+            if isinstance(payload, dict) and payload.get('error') == 'Access Denied':
+                raise InventoryError(
+                    'Zoho OAuth access-token limit reached; wait at least 10 minutes before retrying.'
+                )
+        raise InventoryError(
+            f'Zoho {context} returned HTTP {response.status_code}; no retry made. Response content hidden.'
+        )
     try:
         payload = response.json()
     except ValueError:
@@ -56,7 +67,7 @@ class WorkDriveReader:
                 'refresh_token': self.credentials['ZOHO_REFRESH_TOKEN'],
                 'grant_type': 'refresh_token',
             },
-        ))
+        ), 'OAuth token request')
         token = payload.get('access_token')
         domain = payload.get('api_domain')
         if not isinstance(token, str) or not re.fullmatch(r'[A-Za-z0-9._~-]+', token):
