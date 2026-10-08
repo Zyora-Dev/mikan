@@ -49,6 +49,25 @@ class ZohoMigrationTests(unittest.TestCase):
         self.assertEqual([(item['kind'], item['source_id']) for item in items], [('folder', 'project123')])
         reader.get.assert_not_called()
 
+    @patch('zoho_migration.children')
+    def test_inventory_preserves_destination_path_longer_than_255_characters(self, children):
+        root = {'id': 'eugine123', 'attributes': {'name': 'Eugine', 'is_folder': True}}
+        nested = {'id': 'nested123', 'attributes': {'name': 'a' * 250, 'is_folder': True}}
+        children.side_effect = [[root], [nested], []]
+
+        items = inventory_folder(Mock(), 'eugine123', 'Eugine')
+
+        self.assertEqual(len(items[1]['destination_path']), 263)
+
+    @patch('zoho_migration.children')
+    def test_inventory_reports_repeated_folder_identity_separately(self, children):
+        root = {'id': 'eugine123', 'attributes': {'name': 'Eugine', 'is_folder': True}}
+        repeated = {'id': 'eugine123', 'attributes': {'name': 'Repeated', 'is_folder': True}}
+        children.side_effect = [[root], [repeated]]
+
+        with self.assertRaisesRegex(InventoryError, 'repeated or cyclic folder identity'):
+            inventory_folder(Mock(), 'eugine123', 'Eugine')
+
     @patch('zoho_migration.children', return_value=[])
     def test_inventory_rejects_root_missing_from_mikan_listing(self, _children):
         with self.assertRaisesRegex(InventoryError, 'no longer uniquely present under Mikan'):

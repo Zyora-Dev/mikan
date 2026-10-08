@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field
 
-from company_root import ROOT_ENTRIES, RootFolderInput, create_root_folder
+from company_root import MAX_ROOT_PATH_LENGTH, ROOT_ENTRIES, RootFolderInput, create_root_folder
 from database import connect, get_db
 from uploads import storage_client
 from zoho_inventory import InventoryError, WorkDriveReader, children
@@ -188,8 +188,10 @@ def inventory_folder(reader, source_id, root_name):
                 or attributes.get('is_folder') is not True or (expected_name and name != expected_name)):
             raise InventoryError('Source folder identity changed during inventory.')
         path = f'{parent_path}/{name}' if parent_path else name
-        if len(path) > 255 or folder_id in seen:
-            raise InventoryError('Source hierarchy is cyclic, repeated, or exceeds destination limits.')
+        if len(path) > MAX_ROOT_PATH_LENGTH:
+            raise InventoryError(f'Source path exceeds the {MAX_ROOT_PATH_LENGTH}-character destination limit: {path}')
+        if folder_id in seen:
+            raise InventoryError('Source hierarchy contains a repeated or cyclic folder identity.')
         seen.add(folder_id)
         items.append({
             'kind': 'folder', 'source_id': folder_id, 'source_parent_id': parent_id, 'source_file_id': None,
@@ -209,8 +211,10 @@ def inventory_folder(reader, source_id, root_name):
                 raise InventoryError('Unsupported native document or unknown source resource.')
             size = exact_source_size(child_attributes)
             file_path = f'{path}/{child_name}'
-            if len(file_path) > 255 or child_id in seen:
-                raise InventoryError('Source hierarchy is repeated or exceeds destination limits.')
+            if len(file_path) > MAX_ROOT_PATH_LENGTH:
+                raise InventoryError(f'Source path exceeds the {MAX_ROOT_PATH_LENGTH}-character destination limit: {file_path}')
+            if child_id in seen:
+                raise InventoryError('Source hierarchy contains a repeated file identity.')
             seen.add(child_id)
             file_item = {
                 'kind': 'file', 'source_id': child_id, 'source_parent_id': folder_id, 'source_file_id': child_id,
@@ -278,7 +282,7 @@ def repair_legacy_destination(connection, job, items):
             item['destination_path'] != old_root and not item['destination_path'].startswith(old_root + '/')
             for item in items):
         raise InventoryError('Migration destination checkpoint is inconsistent; nothing moved.')
-    if any(len(f'{DESTINATION_ROOT}/{item["destination_path"]}') > 255 for item in items):
+    if any(len(f'{DESTINATION_ROOT}/{item["destination_path"]}') > MAX_ROOT_PATH_LENGTH for item in items):
         raise InventoryError('Correct Mikan destination exceeds the path limit; nothing moved.')
     with connection.transaction():
         try_lock_root(connection, job['company_id'])

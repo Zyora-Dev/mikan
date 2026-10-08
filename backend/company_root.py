@@ -9,9 +9,12 @@ from files import stream_file
 from workflows import StrictInput, date_clause, list_rows, validate_file_target
 
 
+MAX_ROOT_PATH_LENGTH = 512
+
+
 class RootFolderInput(StrictInput):
     name: str = Field(min_length=1, max_length=255)
-    parent: str = Field(default='', max_length=255)
+    parent: str = Field(default='', max_length=MAX_ROOT_PATH_LENGTH)
 
     @field_validator('name', 'parent')
     @classmethod
@@ -22,8 +25,8 @@ class RootFolderInput(StrictInput):
 
 def root_path(parent, name):
     path = '/'.join(part for part in (parent, name) if part)
-    if len(path) > 255:
-        raise ValueError('Folder path exceeds 255 characters.')
+    if len(path) > MAX_ROOT_PATH_LENGTH:
+        raise ValueError(f'Folder path exceeds {MAX_ROOT_PATH_LENGTH} characters.')
     return path
 
 
@@ -76,7 +79,7 @@ def create_company_root_router(company_dependency, origin_dependency):
 
     @router.get('')
     def browse(connection=Depends(get_db, scope='function'), admin=Depends(company_dependency),
-               folder: str = Query('', max_length=255), search: str = Query('', max_length=100),
+               folder: str = Query('', max_length=MAX_ROOT_PATH_LENGTH), search: str = Query('', max_length=100),
                page: int = Query(1, ge=1, le=100000), from_date: date | None = None, to_date: date | None = None):
         try:
             validate_file_target(folder, 'move')

@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Response
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from company_root import RootFolderInput, create_company_root_router, create_root_folder, root_path
+from company_root import MAX_ROOT_PATH_LENGTH, RootFolderInput, create_company_root_router, create_root_folder, root_path
 from database import get_db
 
 
@@ -32,8 +32,9 @@ class CompanyRootTests(unittest.TestCase):
         for parent in ('../General', '/General', 'General//Driver'):
             with self.assertRaises(ValidationError):
                 RootFolderInput(name='Driver', parent=parent)
-        with self.assertRaises(ValueError):
-            root_path('a' * 250, 'Driver')
+        self.assertEqual(len(root_path('a' * 255, 'b' * 7)), 263)
+        with self.assertRaisesRegex(ValueError, str(MAX_ROOT_PATH_LENGTH)):
+            root_path('a' * MAX_ROOT_PATH_LENGTH, 'Driver')
 
     def test_existing_folder_is_not_silently_merged(self):
         connection = Mock()
