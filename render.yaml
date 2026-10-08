@@ -32,6 +32,14 @@ services:
         generateValue: true
       - key: INTEGRATION_ENCRYPTION_KEY
         sync: false
+      - key: ZOHO_CLIENT_ID
+        sync: false
+      - key: ZOHO_CLIENT_SECRET
+        sync: false
+      - key: ZOHO_REFRESH_TOKEN
+        sync: false
+      - key: ZOHO_ACCOUNTS_URL
+        value: 'https://accounts.zoho.in'
       - key: MIKAN_AUTOMATION_ENABLED
         value: 'false'
   - type: web

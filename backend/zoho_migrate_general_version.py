@@ -12,7 +12,7 @@ import psycopg
 from botocore.exceptions import BotoCoreError, ClientError
 from psycopg.rows import dict_row
 
-from zoho_authorize import CREDENTIALS_PATH, AuthorizationError, load_credentials
+from zoho_authorize import ACCOUNTS_URL, CREDENTIALS_PATH, AuthorizationError, load_credentials
 from zoho_inventory import InventoryError, WorkDriveReader, response_json
 from zoho_migrate import COMPANY_NAME, migration_dsn, object_head, verify_object
 
@@ -23,6 +23,33 @@ FILE_NAME = 'VALVE PIT GA DRAWING.pdf'
 VERSION_LABEL = '1.0'
 VERSION_SIZE = 515_641
 VERSION_SHA256 = '9baadfd2c992a70055a83f1af05b8884ef94855b5cec1ad0362418b5c2f0f51d'
+
+
+def migration_credentials(path=None):
+    if path is not None:
+        try:
+            credentials, _ = load_credentials(path, require_refresh=True)
+            return credentials
+        except FileNotFoundError:
+            raise AuthorizationError(f'Zoho credentials file is missing: {path}.') from None
+    names = ('ZOHO_CLIENT_ID', 'ZOHO_CLIENT_SECRET', 'ZOHO_REFRESH_TOKEN')
+    values = {name: (os.environ.get(name) or '').strip() for name in names}
+    configured = [name for name, value in values.items() if value]
+    if configured:
+        missing = [name for name, value in values.items() if not value]
+        if missing:
+            raise AuthorizationError(f'Missing permanent Zoho environment variable: {missing[0]}.')
+        accounts_url = (os.environ.get('ZOHO_ACCOUNTS_URL') or ACCOUNTS_URL).strip()
+        if accounts_url != ACCOUNTS_URL:
+            raise AuthorizationError(f'ZOHO_ACCOUNTS_URL must be {ACCOUNTS_URL} for this India Self Client.')
+        return {**values, 'ZOHO_ACCOUNTS_URL': accounts_url}
+    try:
+        credentials, _ = load_credentials(CREDENTIALS_PATH, require_refresh=True)
+        return credentials
+    except FileNotFoundError:
+        raise AuthorizationError(
+            'Zoho credentials are not configured. Set ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, and ZOHO_ACCOUNTS_URL in Render.'
+        ) from None
 
 
 def historical_url(reader):
@@ -167,19 +194,14 @@ def main(argv=None):
     parser.add_argument('--execute', action='store_true')
     parser.add_argument('--confirm-company')
     parser.add_argument('--backup-confirmed', action='store_true')
-    parser.add_argument('--credentials', type=Path, default=CREDENTIALS_PATH)
+    parser.add_argument('--credentials', type=Path)
     args = parser.parse_args(argv)
     try:
         if args.execute and (args.confirm_company != COMPANY_NAME or not args.backup_confirmed):
             raise InventoryError('Execution requires --confirm-company "Mikan Engineering Pvt Ltd" and --backup-confirmed.')
         credentials = None
         if args.execute:
-            try:
-                credentials, _ = load_credentials(args.credentials, require_refresh=True)
-            except FileNotFoundError:
-                raise AuthorizationError(
-                    f'Zoho credentials file is missing: {args.credentials}. Render redeploys remove this temporary file; recreate it with mode 600 before executing.'
-                ) from None
+            credentials = migration_credentials(args.credentials)
         dsn = migration_dsn()
         with psycopg.connect(dsn, sslmode='require', connect_timeout=10, autocommit=True, row_factory=dict_row) as connection:
             with connection.transaction():

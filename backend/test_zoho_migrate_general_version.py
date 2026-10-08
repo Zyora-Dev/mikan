@@ -38,7 +38,27 @@ class HistoricalVersionSourceTests(unittest.TestCase):
         self.assertEqual(result, 1)
         migration_dsn.assert_not_called()
         self.assertIn(f'Zoho credentials file is missing: {missing}', output.getvalue())
-        self.assertIn('Render redeploys remove this temporary file', output.getvalue())
+
+    def test_execute_uses_complete_environment_credentials_before_database_access(self):
+        credentials = {
+            'ZOHO_CLIENT_ID': 'client',
+            'ZOHO_CLIENT_SECRET': 'secret',
+            'ZOHO_REFRESH_TOKEN': 'refresh',
+            'ZOHO_ACCOUNTS_URL': 'https://accounts.zoho.in',
+        }
+        with patch.dict(os.environ, credentials, clear=True):
+            self.assertEqual(migration.migration_credentials(), credentials)
+
+    def test_partial_environment_credentials_fail_before_database_access(self):
+        output = io.StringIO()
+        with patch.dict(os.environ, {'ZOHO_CLIENT_ID': 'client'}, clear=True), \
+                patch('sys.stdout', output), patch.object(migration, 'migration_dsn') as migration_dsn:
+            result = migration.main([
+                '--execute', '--confirm-company', 'Mikan Engineering Pvt Ltd', '--backup-confirmed',
+            ])
+        self.assertEqual(result, 1)
+        migration_dsn.assert_not_called()
+        self.assertIn('Missing permanent Zoho environment variable: ZOHO_CLIENT_SECRET', output.getvalue())
 
     def reader(self, content=None, status=200, download_url=None, attributes=None):
         content = exact_pdf() if content is None else content
