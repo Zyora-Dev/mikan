@@ -1,10 +1,13 @@
 import hashlib
 import json
 import logging
+import os
 import re
 import shutil
 import tempfile
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal, InvalidOperation
 from uuid import UUID, uuid4
 
@@ -26,10 +29,14 @@ MIKAN_ROOT_ID = '4ligq5e352ffc509e405c863fc17a7c4d83c1'
 DESTINATION_ROOT = 'Mikan'
 MIGRATION_FILE_BYTES = 10_000_000_000
 TRANSFER_ATTEMPTS = 4
+ITEM_WORKERS = max(1, min(int(os.environ.get('MIKAN_MIGRATION_ITEM_WORKERS', '3')), 8))
 JOB_COLUMNS = '''id,source_folder_id,source_folder_name,destination_path,status,phase,
     folders_total,folders_complete,files_total,files_complete,versions_total,versions_complete,
     bytes_total,bytes_complete,attempts,last_error,created_at,started_at,completed_at,updated_at'''
 LOGGER = logging.getLogger(__name__)
+ITEM_SLOTS = threading.BoundedSemaphore(ITEM_WORKERS)
+DISK_CONDITION = threading.Condition()
+reserved_temporary_bytes = 0
 
 
 class MigrationDeferred(Exception):
@@ -647,27 +654,29 @@ def transfer_item_once(connection, reader, client, storage, job, item):
         digest = record['sha256']
         head = verify_object(client, storage, record, digest) if digest and object_head(client, storage, record) else None
         if head is None:
-            if shutil.disk_usage(tempfile.gettempdir()).free < item['size_bytes'] + 128 * 1024 * 1024:
-                raise InventoryError('Insufficient temporary disk space for the next item.')
-            with tempfile.TemporaryFile() as output:
-                digest = download_source(reader, current_entry(item), output) if item['kind'] == 'file' else download_historical(reader, item, output)
-                with connection.transaction():
-                    bound = connection.execute(
-                        f"UPDATE {table} SET sha256=%s WHERE id=%s AND company_id=%s AND state='pending' AND (sha256 IS NULL OR sha256=%s) RETURNING id",
-                        (digest, identifier, job['company_id'], digest),
-                    ).fetchone()
-                    if not bound:
-                        raise InventoryError('Pending destination identity or state changed; nothing overwritten.')
-                metadata = {'sha256': digest, 'zoho-source-id': item['source_file_id']}
-                if item['kind'] == 'version':
-                    metadata['zoho-source-version-id'] = item['source_version_id']
-                if item['size_bytes'] > SINGLE_UPLOAD_BYTES:
-                    upload_multipart(connection, client, storage, table, record, output, metadata)
-                else:
-                    client.put_object(Bucket=storage['bucket'], Key=record['object_key'], Body=output,
-                        ContentLength=item['size_bytes'], ContentType='application/octet-stream', IfNoneMatch='*', Metadata=metadata)
-                record['sha256'] = digest
-                head = verify_object(client, storage, record, digest)
+            reserved_bytes = reserve_temporary_space(item['size_bytes'])
+            try:
+                with tempfile.TemporaryFile() as output:
+                    digest = download_source(reader, current_entry(item), output) if item['kind'] == 'file' else download_historical(reader, item, output)
+                    with connection.transaction():
+                        bound = connection.execute(
+                            f"UPDATE {table} SET sha256=%s WHERE id=%s AND company_id=%s AND state='pending' AND (sha256 IS NULL OR sha256=%s) RETURNING id",
+                            (digest, identifier, job['company_id'], digest),
+                        ).fetchone()
+                        if not bound:
+                            raise InventoryError('Pending destination identity or state changed; nothing overwritten.')
+                    metadata = {'sha256': digest, 'zoho-source-id': item['source_file_id']}
+                    if item['kind'] == 'version':
+                        metadata['zoho-source-version-id'] = item['source_version_id']
+                    if item['size_bytes'] > SINGLE_UPLOAD_BYTES:
+                        upload_multipart(connection, client, storage, table, record, output, metadata)
+                    else:
+                        client.put_object(Bucket=storage['bucket'], Key=record['object_key'], Body=output,
+                            ContentLength=item['size_bytes'], ContentType='application/octet-stream', IfNoneMatch='*', Metadata=metadata)
+                    record['sha256'] = digest
+                    head = verify_object(client, storage, record, digest)
+            finally:
+                release_temporary_space(reserved_bytes)
         with connection.transaction():
             published = connection.execute(
                 f"UPDATE {table} SET state='ready',etag=%s,object_version=%s,uploaded_at=clock_timestamp(),multipart_upload_id=NULL,multipart_part_bytes=NULL WHERE id=%s AND company_id=%s AND state='pending' AND sha256=%s RETURNING id",
@@ -698,6 +707,73 @@ def transfer_item(connection, reader, client, storage, job, item):
             LOGGER.warning('Zoho migration job %s item %s transient %s; retrying in %ss (%s/%s)',
                 job['id'], item['id'], type(error).__name__, delay, attempt, TRANSFER_ATTEMPTS)
             time.sleep(delay)
+
+
+def reserve_temporary_space(size_bytes):
+    global reserved_temporary_bytes
+    required = size_bytes + 128 * 1024 * 1024
+    with DISK_CONDITION:
+        while reserved_temporary_bytes and shutil.disk_usage(tempfile.gettempdir()).free - reserved_temporary_bytes < required:
+            DISK_CONDITION.wait()
+        if shutil.disk_usage(tempfile.gettempdir()).free - reserved_temporary_bytes < required:
+            raise InventoryError('Insufficient temporary disk space for the next item.')
+        reserved_temporary_bytes += required
+    return required
+
+
+def release_temporary_space(reserved_bytes):
+    global reserved_temporary_bytes
+    with DISK_CONDITION:
+        reserved_temporary_bytes -= reserved_bytes
+        DISK_CONDITION.notify_all()
+
+
+def transfer_item_worker(job, item, storage, credentials, token_state, token_lock):
+    with ITEM_SLOTS:
+        with connect() as connection, httpx.Client(timeout=120, follow_redirects=False, trust_env=False) as http_client:
+            connection.autocommit = True
+            reader = WorkDriveReader(http_client, credentials)
+            with token_lock:
+                reader.access_token = token_state['access_token']
+                reader.api_domain = token_state['api_domain']
+                reader.expires_at = token_state['expires_at']
+                if not reader.access_token or time.monotonic() >= reader.expires_at:
+                    reader.refresh()
+                    token_state.update(
+                        access_token=reader.access_token,
+                        api_domain=reader.api_domain,
+                        expires_at=reader.expires_at,
+                    )
+            client = storage_client(storage)
+            try:
+                transfer_item(connection, reader, client, storage, job, item)
+            finally:
+                client.close()
+            with token_lock:
+                if reader.expires_at > token_state['expires_at']:
+                    token_state.update(
+                        access_token=reader.access_token,
+                        api_domain=reader.api_domain,
+                        expires_at=reader.expires_at,
+                    )
+
+
+def transfer_items_parallel(job, items, storage, credentials, reader):
+    pending = [item for item in items if item['state'] != 'ready']
+    if not pending:
+        return
+    if not reader.access_token or time.monotonic() >= reader.expires_at:
+        reader.refresh()
+    token_state = {
+        'access_token': reader.access_token,
+        'api_domain': reader.api_domain,
+        'expires_at': reader.expires_at,
+    }
+    token_lock = threading.Lock()
+    with ThreadPoolExecutor(max_workers=min(ITEM_WORKERS, len(pending)), thread_name_prefix='zoho-item') as executor:
+        futures = [executor.submit(transfer_item_worker, job, item, storage, credentials, token_state, token_lock) for item in pending]
+        for future in futures:
+            future.result()
 
 
 def persist_inventory(connection, job, items):
@@ -748,8 +824,7 @@ def execute_job(connection, job):
             for kind, phase in (('file', 'Current files'), ('version', 'File versions')):
                 connection.execute('UPDATE zoho_migration_job SET status=%s,phase=%s,updated_at=clock_timestamp() WHERE id=%s',
                     ('transferring', phase, job['id']))
-                for item in (value for value in items if value['kind'] == kind):
-                    transfer_item(connection, reader, client, storage, job, item)
+                transfer_items_parallel(job, [value for value in items if value['kind'] == kind], storage, credentials, reader)
             connection.execute("UPDATE zoho_migration_job SET status='verifying',phase='Final verification',updated_at=clock_timestamp() WHERE id=%s", (job['id'],))
             records = connection.execute('SELECT * FROM zoho_migration_item WHERE job_id=%s ORDER BY kind,destination_path', (job['id'],)).fetchall()
             if len(records) != len(items) or any(item['state'] != 'ready' for item in records):

@@ -1,4 +1,5 @@
 import hashlib
+import threading
 import unittest
 from io import BytesIO
 from unittest.mock import Mock, patch
@@ -11,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from database import get_db
 from zoho_inventory import InventoryError
-from zoho_migration import MIGRATION_FILE_BYTES, MIKAN_ROOT_ID, MigrationDeferred, create_migration_router, current_entry, download_historical, exact_source_size, execute_job, historical_url, historical_versions, inventory_folder, migration_file_limit, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_folder, storage_preflight, transfer_item, try_lock_root, upload_multipart, verify_ready_checkpoint
+from zoho_migration import MIGRATION_FILE_BYTES, MIKAN_ROOT_ID, MigrationDeferred, create_migration_router, current_entry, download_historical, exact_source_size, execute_job, historical_url, historical_versions, inventory_folder, migration_file_limit, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_folder, storage_preflight, transfer_item, transfer_items_parallel, try_lock_root, upload_multipart, verify_ready_checkpoint
 
 
 class Transaction:
@@ -859,7 +860,7 @@ class ZohoMigrationTests(unittest.TestCase):
     @patch('zoho_migration.migration_credentials', return_value={})
     @patch('zoho_migration.WorkDriveReader')
     @patch('zoho_migration.storage_client')
-    @patch('zoho_migration.transfer_item')
+    @patch('zoho_migration.transfer_items_parallel')
     @patch('zoho_migration.reserve_items')
     def test_execute_job_reloads_reserved_destination_ids(self, reserve, transfer, storage_client, _reader, _credentials):
         stale = {'id': 1, 'kind': 'file', 'destination_path': 'Whiteboards/board.png',
@@ -892,7 +893,47 @@ class ZohoMigrationTests(unittest.TestCase):
         with patch('zoho_migration.verify_ready_checkpoint'):
             execute_job(connection, job)
 
-        self.assertEqual(transfer.call_args.args[-1]['destination_entry_id'], refreshed['destination_entry_id'])
+        self.assertEqual(transfer.call_args_list[0].args[1][0]['destination_entry_id'], refreshed['destination_entry_id'])
+
+    @patch('zoho_migration.ITEM_WORKERS', 3)
+    @patch('zoho_migration.transfer_item_worker')
+    def test_nested_items_transfer_concurrently(self, worker):
+        started = threading.Barrier(4)
+        release = threading.Event()
+
+        def transfer(*_args):
+            started.wait(timeout=2)
+            release.wait(timeout=2)
+
+        worker.side_effect = transfer
+        reader = Mock(access_token='token', api_domain='https://www.zohoapis.in', expires_at=float('inf'))
+        items = [{'id': index, 'state': 'pending', 'size_bytes': 1} for index in range(3)]
+        completed = threading.Event()
+        thread = threading.Thread(target=lambda: (transfer_items_parallel(
+            {'id': uuid4()}, items, {'bucket': 'bucket'}, {}, reader), completed.set()))
+        thread.start()
+        started.wait(timeout=2)
+        self.assertFalse(completed.is_set())
+        release.set()
+        thread.join(timeout=2)
+        self.assertTrue(completed.is_set())
+
+    @patch('zoho_migration.transfer_item_worker')
+    def test_nested_transfer_skips_ready_items_and_propagates_failure(self, worker):
+        failure = httpx.ReadTimeout('temporary outage')
+        worker.side_effect = failure
+        reader = Mock(access_token='token', api_domain='https://www.zohoapis.in', expires_at=float('inf'))
+        items = [
+            {'id': 1, 'state': 'ready', 'size_bytes': 1},
+            {'id': 2, 'state': 'pending', 'size_bytes': 1},
+        ]
+
+        with self.assertRaises(httpx.ReadTimeout) as raised:
+            transfer_items_parallel({'id': uuid4()}, items, {'bucket': 'bucket'}, {}, reader)
+
+        self.assertIs(raised.exception, failure)
+        self.assertEqual(worker.call_count, 1)
+        self.assertEqual(worker.call_args.args[1]['id'], 2)
 
 
 if __name__ == '__main__':
