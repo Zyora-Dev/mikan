@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from database import get_db
 from zoho_inventory import InventoryError
-from zoho_migration import MIGRATION_FILE_BYTES, MIKAN_ROOT_ID, MigrationDeferred, create_migration_router, current_entry, download_historical, exact_source_size, execute_job, historical_url, historical_versions, inventory_folder, migration_file_limit, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_directory, source_folder, storage_preflight, transfer_item, transfer_items_parallel, try_lock_root, upload_multipart, verify_ready_checkpoint
+from zoho_migration import MIGRATION_FILE_BYTES, MIKAN_ROOT_ID, ZOHO_TOKEN_STATE, MigrationDeferred, authenticated_reader, create_migration_router, current_entry, download_historical, exact_source_size, execute_job, historical_url, historical_versions, inventory_folder, migration_file_limit, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_directory, source_folder, storage_preflight, transfer_item, transfer_items_parallel, try_lock_root, upload_multipart, verify_ready_checkpoint
 
 
 class Transaction:
@@ -24,6 +24,43 @@ class Transaction:
 
 
 class ZohoMigrationTests(unittest.TestCase):
+    def setUp(self):
+        ZOHO_TOKEN_STATE.update(access_token=None, api_domain=None, expires_at=0, retry_after=0)
+
+    @patch('zoho_migration.WorkDriveReader')
+    def test_authenticated_reader_reuses_cached_access_token(self, reader_class):
+        first = Mock(access_token=None, api_domain=None, expires_at=0)
+        first.refresh.side_effect = lambda: (
+            setattr(first, 'access_token', 'shared-token'),
+            setattr(first, 'api_domain', 'https://www.zohoapis.in'),
+            setattr(first, 'expires_at', float('inf')),
+        )
+        second = Mock(access_token=None, api_domain=None, expires_at=0)
+        reader_class.side_effect = [first, second]
+
+        authenticated_reader(Mock(), {})
+        authenticated_reader(Mock(), {})
+
+        self.assertEqual(first.refresh.call_count, 1)
+        second.refresh.assert_not_called()
+        self.assertEqual(second.access_token, 'shared-token')
+
+    @patch('zoho_migration.WorkDriveReader')
+    def test_authenticated_reader_gates_retries_after_oauth_limit(self, reader_class):
+        first = Mock(access_token=None, api_domain=None, expires_at=0)
+        first.refresh.side_effect = InventoryError(
+            'Zoho OAuth access-token limit reached; wait at least 10 minutes before retrying.')
+        second = Mock(access_token=None, api_domain=None, expires_at=0)
+        reader_class.side_effect = [first, second]
+
+        with self.assertRaisesRegex(InventoryError, 'access-token limit reached'):
+            authenticated_reader(Mock(), {})
+        with self.assertRaisesRegex(InventoryError, 'access-token limit reached'):
+            authenticated_reader(Mock(), {})
+
+        self.assertEqual(first.refresh.call_count, 1)
+        second.refresh.assert_not_called()
+
     def test_company_root_lock_contention_defers_without_waiting(self):
         connection = Mock()
         connection.execute.return_value.fetchone.return_value = {'acquired': False}

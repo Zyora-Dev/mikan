@@ -37,10 +37,47 @@ LOGGER = logging.getLogger(__name__)
 ITEM_SLOTS = threading.BoundedSemaphore(ITEM_WORKERS)
 DISK_CONDITION = threading.Condition()
 reserved_temporary_bytes = 0
+ZOHO_TOKEN_LOCK = threading.Lock()
+ZOHO_TOKEN_STATE = {'access_token': None, 'api_domain': None, 'expires_at': 0, 'retry_after': 0}
 
 
 class MigrationDeferred(Exception):
     pass
+
+
+def authenticated_reader(client, credentials):
+    reader = WorkDriveReader(client, credentials)
+    with ZOHO_TOKEN_LOCK:
+        now = time.monotonic()
+        reader.access_token = ZOHO_TOKEN_STATE['access_token']
+        reader.api_domain = ZOHO_TOKEN_STATE['api_domain']
+        reader.expires_at = ZOHO_TOKEN_STATE['expires_at']
+        if not reader.access_token or now >= reader.expires_at:
+            if now < ZOHO_TOKEN_STATE['retry_after']:
+                raise InventoryError('Zoho OAuth access-token limit reached; wait at least 10 minutes before retrying.')
+            try:
+                reader.refresh()
+            except InventoryError as error:
+                if 'access-token limit reached' in str(error):
+                    ZOHO_TOKEN_STATE['retry_after'] = time.monotonic() + 600
+                raise
+            ZOHO_TOKEN_STATE.update(
+                access_token=reader.access_token,
+                api_domain=reader.api_domain,
+                expires_at=reader.expires_at,
+                retry_after=0,
+            )
+    return reader
+
+
+def remember_reader_token(reader):
+    with ZOHO_TOKEN_LOCK:
+        if reader.access_token and reader.expires_at > ZOHO_TOKEN_STATE['expires_at']:
+            ZOHO_TOKEN_STATE.update(
+                access_token=reader.access_token,
+                api_domain=reader.api_domain,
+                expires_at=reader.expires_at,
+            )
 
 
 class MigrationStart(BaseModel):
@@ -324,24 +361,30 @@ def list_source_folders():
     credentials = migration_credentials()
     timeout = httpx.Timeout(20, connect=5)
     with httpx.Client(timeout=timeout, follow_redirects=False, trust_env=False) as client:
-        reader = WorkDriveReader(client, credentials)
-        root = reader.get(f'/teamfolders/{MIKAN_ROOT_ID}').get('data', {})
-        attributes = root.get('attributes', {})
-        if root.get('id') != MIKAN_ROOT_ID or attributes.get('name') != 'Mikan' or attributes.get('is_partial_lib'):
-            raise InventoryError('Mikan source identity or access changed.')
-        return [source_folder(record) for record in children(reader, f'/teamfolders/{MIKAN_ROOT_ID}/files', 'folders')]
+        reader = authenticated_reader(client, credentials)
+        try:
+            root = reader.get(f'/teamfolders/{MIKAN_ROOT_ID}').get('data', {})
+            attributes = root.get('attributes', {})
+            if root.get('id') != MIKAN_ROOT_ID or attributes.get('name') != 'Mikan' or attributes.get('is_partial_lib'):
+                raise InventoryError('Mikan source identity or access changed.')
+            return [source_folder(record) for record in children(reader, f'/teamfolders/{MIKAN_ROOT_ID}/files', 'folders')]
+        finally:
+            remember_reader_token(reader)
 
 
 def browse_source_folders(ancestor_ids):
     credentials = migration_credentials()
     timeout = httpx.Timeout(20, connect=5)
     with httpx.Client(timeout=timeout, follow_redirects=False, trust_env=False) as client:
-        reader = WorkDriveReader(client, credentials)
-        root = reader.get(f'/teamfolders/{MIKAN_ROOT_ID}').get('data', {})
-        attributes = root.get('attributes', {})
-        if root.get('id') != MIKAN_ROOT_ID or attributes.get('name') != 'Mikan' or attributes.get('is_partial_lib'):
-            raise InventoryError('Mikan source identity or access changed.')
-        return source_directory(reader, ancestor_ids)
+        reader = authenticated_reader(client, credentials)
+        try:
+            root = reader.get(f'/teamfolders/{MIKAN_ROOT_ID}').get('data', {})
+            attributes = root.get('attributes', {})
+            if root.get('id') != MIKAN_ROOT_ID or attributes.get('name') != 'Mikan' or attributes.get('is_partial_lib'):
+                raise InventoryError('Mikan source identity or access changed.')
+            return source_directory(reader, ancestor_ids)
+        finally:
+            remember_reader_token(reader)
 
 
 def job_dict(record):
@@ -860,6 +903,9 @@ def transfer_items_parallel(job, items, storage, credentials, reader):
         futures = [executor.submit(transfer_item_worker, job, item, storage, credentials, token_state, token_lock) for item in pending]
         for future in futures:
             future.result()
+    reader.access_token = token_state['access_token']
+    reader.api_domain = token_state['api_domain']
+    reader.expires_at = token_state['expires_at']
 
 
 def persist_inventory(connection, job, items):
@@ -887,7 +933,7 @@ def persist_inventory(connection, job, items):
 def execute_job(connection, job):
     credentials = migration_credentials()
     with httpx.Client(timeout=120, follow_redirects=False, trust_env=False) as http_client:
-        reader = WorkDriveReader(http_client, credentials)
+        reader = authenticated_reader(http_client, credentials)
         items = connection.execute('SELECT * FROM zoho_migration_item WHERE job_id=%s ORDER BY destination_path,kind,source_id',
             (job['id'],)).fetchall()
         if not items:
@@ -933,6 +979,7 @@ def execute_job(connection, job):
                                  'bytes': sum(item['size_bytes'] for item in items if item['kind'] in ('file', 'version'))})))
         finally:
             client.close()
+            remember_reader_token(reader)
 
 
 def process_migrations():

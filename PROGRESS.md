@@ -1,5 +1,11 @@
 # Mikan Progress
 
+## Zoho OAuth Token Reuse Repair - 2026-10-09 (Verified)
+- Nested browsing exposed that every independent folder listing and browse request created a new `WorkDriveReader` with no access token, causing a new refresh-token exchange on each request. Browser revalidation therefore exhausted Zoho's access-token creation limit and blocked nested folder navigation even though the browse route itself was working.
+- Added one process-wide, lock-protected Zoho access-token cache used by top-level listing, nested browsing, inventory, and migration execution. Concurrent callers now share a still-valid token; parallel transfer workers return refreshed token state to the parent reader; and job cleanup preserves a newly refreshed token for later browser requests.
+- The exact Zoho access-token-limit response now opens a 10-minute local retry gate, so repeated page revalidation does not keep contacting the OAuth endpoint during Zoho's cooldown. Production runs one Uvicorn process with one worker, so this state covers all configured migration coroutines and request handlers in the API service.
+- PASS Python compilation, edited-file diagnostics, whitespace validation, 61 focused migration tests, and 84 combined Zoho inventory/migration/company-root tests with 6 expected skips. This repair requires an API redeploy only. Zoho's already-active provider cooldown must expire before the first successful token exchange; do not repeatedly refresh the page during that interval.
+
 ## Nested Migration Browse Proxy Repair - 2026-10-09 (Verified)
 - Production browser evidence showed the deployed Migration view requesting `/api/company/teams/data/migration/browse` and receiving `404 Not found` from the Next.js company proxy. The nested browser release added the UI and backend route but omitted that exact GET path from the proxy read allowlist, so the request never reached the API.
 - The company proxy now permits only the exact additional read path `data/migration/browse`; write permissions and every other allowlist boundary are unchanged. PASS edited-file diagnostics, whitespace validation, and the optimized Next.js 16.3.8 production build with 33 pages. This repair requires a web redeploy only; no API redeploy, database/configuration change, migration retry, Zoho mutation, or destination write is required.
