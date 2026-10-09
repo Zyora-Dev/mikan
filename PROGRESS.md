@@ -1,5 +1,9 @@
 # Mikan Progress
 
+## Nested Migration Browse Proxy Repair - 2026-10-09 (Verified)
+- Production browser evidence showed the deployed Migration view requesting `/api/company/teams/data/migration/browse` and receiving `404 Not found` from the Next.js company proxy. The nested browser release added the UI and backend route but omitted that exact GET path from the proxy read allowlist, so the request never reached the API.
+- The company proxy now permits only the exact additional read path `data/migration/browse`; write permissions and every other allowlist boundary are unchanged. PASS edited-file diagnostics, whitespace validation, and the optimized Next.js 16.3.8 production build with 33 pages. This repair requires a web redeploy only; no API redeploy, database/configuration change, migration retry, Zoho mutation, or destination write is required.
+
 ## Nested Migration Folder Browser - 2026-10-09 (Local Verified)
 - Company admins can now browse from Zoho `Mikan` into any validated nested directory, use breadcrumbs to move through the hierarchy, and select multiple immediate child folders as independent migration jobs. Every browse hop is resolved server-side from the fixed Mikan source root; submitted IDs cannot forge a destination path.
 - Nested jobs preserve complete ancestry in Company Root. Selecting `Mikan/Office Directory/Accounts` inventories and creates `Company Root/Mikan/Office Directory/Accounts`, including reusable ancestor-folder checkpoints, instead of flattening the job to `Mikan/Accounts`. Sibling selections can run independently and safely reconcile shared ancestors by exact source ID and path. Existing parent/descendant jobs are rejected as overlapping before any new job is inserted.
