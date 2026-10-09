@@ -1,5 +1,10 @@
 # Mikan Progress
 
+## Nested Migration Ancestry Proxy Repair - 2026-10-09 (Verified)
+- Live authenticated inspection confirmed the OAuth-reuse API repair is deployed: root `/api/company/teams/data/migration/browse` returns HTTP 200 and current Zoho folders. Nested requests also returned HTTP 200 but always returned the identical root listing and only the Mikan breadcrumb.
+- Root cause: the Next.js proxy now allowed the `/browse` route but its query allowlist silently removed `ancestor_ids` before forwarding to FastAPI. The UI click handler and backend ancestry validation were correct; the backend always received an empty ancestry, making an Open-folder click appear to do nothing.
+- The proxy now forwards `ancestor_ids` only for the exact company `data/migration/browse` path. PASS edited-file diagnostics, whitespace validation, and the optimized Next.js 16.3.8 production build with 33 pages. This repair requires a web redeploy only; API, database, OAuth credentials, migration jobs, and source/destination data are unchanged.
+
 ## Zoho OAuth Token Reuse Repair - 2026-10-09 (Verified)
 - Nested browsing exposed that every independent folder listing and browse request created a new `WorkDriveReader` with no access token, causing a new refresh-token exchange on each request. Browser revalidation therefore exhausted Zoho's access-token creation limit and blocked nested folder navigation even though the browse route itself was working.
 - Added one process-wide, lock-protected Zoho access-token cache used by top-level listing, nested browsing, inventory, and migration execution. Concurrent callers now share a still-valid token; parallel transfer workers return refreshed token state to the parent reader; and job cleanup preserves a newly refreshed token for later browser requests.

@@ -182,7 +182,7 @@ export async function teamProxy(request: NextRequest, path: string, scope: "comp
       }
     }
     const params = new URLSearchParams();
-    for (const key of ["page", "page_size", "search", "from_date", "to_date", "team_id", ...(scope === "team" && path === "files" ? ["folder", "owner_id"] : []), ...(path.startsWith("workflows/") ? ["workflow_id", "node_id", "view"] : []), ...(scope === "company" && path.startsWith("data/") ? ["owner_id", "folder", "view"] : [])]) {
+    for (const key of ["page", "page_size", "search", "from_date", "to_date", "team_id", ...(scope === "team" && path === "files" ? ["folder", "owner_id"] : []), ...(path.startsWith("workflows/") ? ["workflow_id", "node_id", "view"] : []), ...(scope === "company" && path.startsWith("data/") ? ["owner_id", "folder", "view"] : []), ...(scope === "company" && path === "data/migration/browse" ? ["ancestor_ids"] : [])]) {
       const value = request.nextUrl.searchParams.get(key);
       if (value !== null) params.set(key, value);
     }
