@@ -30,6 +30,7 @@ DESTINATION_ROOT = 'Mikan'
 MIGRATION_FILE_BYTES = 10_000_000_000
 TRANSFER_ATTEMPTS = 4
 ITEM_WORKERS = max(1, min(int(os.environ.get('MIKAN_MIGRATION_ITEM_WORKERS', '3')), 8))
+INVENTORY_RETRY_SECONDS = max(60, min(int(os.environ.get('MIKAN_MIGRATION_INVENTORY_RETRY_SECONDS', '300')), 3600))
 JOB_COLUMNS = '''id,source_folder_id,source_folder_name,destination_path,status,phase,
     folders_total,folders_complete,files_total,files_complete,versions_total,versions_complete,
     bytes_total,bytes_complete,attempts,last_error,created_at,started_at,completed_at,updated_at'''
@@ -932,16 +933,29 @@ def persist_inventory(connection, job, items):
 
 def execute_job(connection, job):
     credentials = migration_credentials()
+    items = connection.execute('SELECT * FROM zoho_migration_item WHERE job_id=%s ORDER BY destination_path,kind,source_id',
+        (job['id'],)).fetchall()
+    inventory_lock = None
+    if not items:
+        inventory_lock = f"zoho-migration-inventory:{job['company_id']}"
+        acquired = connection.execute('SELECT pg_try_advisory_lock(hashtextextended(%s,0)) AS acquired',
+            (inventory_lock,)).fetchone()['acquired']
+        if not acquired:
+            raise MigrationDeferred('another source inventory is active')
     with httpx.Client(timeout=120, follow_redirects=False, trust_env=False) as http_client:
-        reader = authenticated_reader(http_client, credentials)
-        items = connection.execute('SELECT * FROM zoho_migration_item WHERE job_id=%s ORDER BY destination_path,kind,source_id',
-            (job['id'],)).fetchall()
-        if not items:
-            connection.execute("UPDATE zoho_migration_job SET status='inventory',phase='Reading source',attempts=attempts+1,updated_at=clock_timestamp() WHERE id=%s", (job['id'],))
-            items = inventory_folder(reader, job['source_folder_id'], job['source_folder_name'], job['destination_path'])
-            persist_inventory(connection, job, items)
-            items = connection.execute('SELECT * FROM zoho_migration_item WHERE job_id=%s ORDER BY destination_path,kind,source_id',
-                (job['id'],)).fetchall()
+        try:
+            reader = authenticated_reader(http_client, credentials)
+            if not items:
+                connection.execute("UPDATE zoho_migration_job SET status='inventory',phase='Reading source',attempts=attempts+1,updated_at=clock_timestamp() WHERE id=%s", (job['id'],))
+                items = inventory_folder(reader, job['source_folder_id'], job['source_folder_name'], job['destination_path'])
+                persist_inventory(connection, job, items)
+                items = connection.execute('SELECT * FROM zoho_migration_item WHERE job_id=%s ORDER BY destination_path,kind,source_id',
+                    (job['id'],)).fetchall()
+                connection.execute('SELECT pg_advisory_unlock(hashtextextended(%s,0))', (inventory_lock,))
+                inventory_lock = None
+        finally:
+            if inventory_lock:
+                connection.execute('SELECT pg_advisory_unlock(hashtextextended(%s,0))', (inventory_lock,))
         items = repair_legacy_destination(connection, job, items)
         items = prune_unstarted_current_version_duplicates(connection, reader, job, items)
         storage = reserve_items(connection, job, items)
@@ -987,8 +1001,17 @@ def process_migrations():
         connection.autocommit = True
         jobs = connection.execute("""SELECT * FROM zoho_migration_job
             WHERE status IN ('queued','inventory','transferring','verifying')
-            AND (phase<>'Waiting for provider' OR updated_at<=clock_timestamp()-INTERVAL '30 seconds')
-            ORDER BY updated_at,id LIMIT 32""").fetchall()
+            AND (phase<>'Waiting for provider'
+                OR (status='inventory' AND updated_at<=clock_timestamp()-(%s * INTERVAL '1 second'))
+                OR (status<>'inventory' AND updated_at<=clock_timestamp()-INTERVAL '30 seconds'))
+            AND (status IN ('transferring','verifying') OR NOT EXISTS (
+                SELECT 1 FROM zoho_migration_job provider_wait
+                WHERE provider_wait.company_id=zoho_migration_job.company_id
+                AND provider_wait.status='inventory' AND provider_wait.phase='Waiting for provider'
+                AND provider_wait.updated_at>clock_timestamp()-(%s * INTERVAL '1 second')
+            ))
+            ORDER BY CASE WHEN status IN ('transferring','verifying') THEN 0 ELSE 1 END,updated_at,id
+            LIMIT 32""", (INVENTORY_RETRY_SECONDS, INVENTORY_RETRY_SECONDS)).fetchall()
         job = None
         lock_key = None
         for candidate in jobs:

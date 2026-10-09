@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from database import get_db
 from zoho_inventory import InventoryError
-from zoho_migration import MIGRATION_FILE_BYTES, MIKAN_ROOT_ID, ZOHO_TOKEN_STATE, MigrationDeferred, authenticated_reader, create_migration_router, current_entry, download_historical, exact_source_size, execute_job, historical_url, historical_versions, inventory_folder, migration_file_limit, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_directory, source_folder, storage_preflight, transfer_item, transfer_items_parallel, try_lock_root, upload_multipart, verify_ready_checkpoint
+from zoho_migration import INVENTORY_RETRY_SECONDS, MIGRATION_FILE_BYTES, MIKAN_ROOT_ID, ZOHO_TOKEN_STATE, MigrationDeferred, authenticated_reader, create_migration_router, current_entry, download_historical, exact_source_size, execute_job, historical_url, historical_versions, inventory_folder, migration_file_limit, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_directory, source_folder, storage_preflight, transfer_item, transfer_items_parallel, try_lock_root, upload_multipart, verify_ready_checkpoint
 
 
 class Transaction:
@@ -890,6 +890,35 @@ class ZohoMigrationTests(unittest.TestCase):
         query = connection.execute.call_args_list[0].args[0]
         self.assertIn("status IN ('queued','inventory','transferring','verifying')", query)
         self.assertNotIn("'failed'", query)
+        self.assertIn("status='inventory'", query)
+        self.assertIn('provider_wait.company_id=zoho_migration_job.company_id', query)
+        self.assertIn("status IN ('transferring','verifying') THEN 0", query)
+        self.assertEqual(connection.execute.call_args_list[0].args[1],
+                 (INVENTORY_RETRY_SECONDS, INVENTORY_RETRY_SECONDS))
+
+    @patch('zoho_migration.migration_credentials', return_value={})
+    def test_inventory_defers_while_company_inventory_lock_is_held(self, _credentials):
+        job = {'id': uuid4(), 'company_id': 7, 'source_folder_id': 'folder1'}
+        connection = Mock()
+
+        def execute(query, *_args):
+            result = Mock()
+            if 'FROM zoho_migration_item' in query:
+                result.fetchall.return_value = []
+            elif 'pg_try_advisory_lock' in query:
+                result.fetchone.return_value = {'acquired': False}
+            return result
+
+        connection.execute.side_effect = execute
+
+        with self.assertRaisesRegex(MigrationDeferred, 'another source inventory is active'):
+            execute_job(connection, job)
+
+        connection.execute.assert_any_call(
+            'SELECT pg_try_advisory_lock(hashtextextended(%s,0)) AS acquired',
+            ('zoho-migration-inventory:7',))
+        self.assertFalse(any('pg_advisory_unlock' in call.args[0]
+                             for call in connection.execute.call_args_list))
 
     @patch('zoho_migration.execute_job')
     @patch('zoho_migration.connect')
@@ -964,7 +993,8 @@ class ZohoMigrationTests(unittest.TestCase):
         process_migrations()
 
         paused = next(call for call in connection.execute.call_args_list
-                      if "phase='Waiting for provider'" in call.args[0])
+                  if call.args[0].lstrip().startswith('UPDATE zoho_migration_job')
+                  and "phase='Waiting for provider'" in call.args[0])
         self.assertEqual(paused.args[1], (job['id'],))
         self.assertFalse(any("status='failed'" in call.args[0] for call in connection.execute.call_args_list))
         query = connection.execute.call_args_list[0].args[0]
@@ -1042,6 +1072,8 @@ class ZohoMigrationTests(unittest.TestCase):
         with patch('zoho_migration.verify_ready_checkpoint'):
             execute_job(connection, job)
 
+        self.assertFalse(any('pg_try_advisory_lock' in call.args[0]
+                             for call in connection.execute.call_args_list))
         self.assertEqual(transfer.call_args_list[0].args[1][0]['destination_entry_id'], refreshed['destination_entry_id'])
 
     @patch('zoho_migration.ITEM_WORKERS', 3)
