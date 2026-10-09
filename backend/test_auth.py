@@ -585,6 +585,30 @@ class AdminAuthTests(unittest.TestCase):
                         await asyncio.wait_for(completed.wait(), timeout=5)
         asyncio.run(exercise())
 
+    def test_lifespan_runs_three_migration_workers_concurrently(self):
+        from main import lifespan
+        async def exercise():
+            started = 0
+            all_started = asyncio.Event()
+            release = asyncio.Event()
+            loop = asyncio.get_running_loop()
+
+            def migration():
+                nonlocal started
+                started += 1
+                if started == 3:
+                    loop.call_soon_threadsafe(all_started.set)
+                asyncio.run_coroutine_threadsafe(release.wait(), loop).result(timeout=5)
+
+            with patch.dict('os.environ', {'MIKAN_AUTOMATION_ENABLED': 'true', 'MIKAN_MIGRATION_WORKERS': '3'}), \
+                    patch('main.deliver_share_emails'), patch('main.tick'), patch('main.cleanup_trash'), \
+                    patch('main.process_migrations', migration):
+                async with lifespan(app):
+                    await asyncio.wait_for(all_started.wait(), timeout=5)
+                    self.assertEqual(started, 3)
+                    release.set()
+        asyncio.run(exercise())
+
     def test_workflow_participant_notifications(self):
         fixture, reviewer, token, flow, payload = self.workflow_fixture()
         response = self.client.post(f"/team/workflows/{flow['id']}/submit", json={'file_id': str(fixture['id']), 'request_key': str(uuid4()), 'reviewers': {'review': [reviewer]}})

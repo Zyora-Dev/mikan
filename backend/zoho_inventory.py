@@ -20,9 +20,14 @@ ROOT_IDS = (
 )
 REPORT_DIRECTORY = Path(__file__).with_name('.zoho-inventory')
 NATIVE_FILTERS = ('documents_native', 'spreadsheets_native', 'presentations_native')
+METADATA_ATTEMPTS = 4
 
 
 class InventoryError(Exception):
+    pass
+
+
+class TransientProviderError(OSError):
     pass
 
 
@@ -81,17 +86,32 @@ class WorkDriveReader:
     def authorized_get(self, path, params=None):
         if not self.access_token or time.monotonic() >= self.expires_at:
             self.refresh()
-        for attempt in range(2):
-            response = self.client.get(
-                f'{self.api_domain}/workdrive/api/v1{path}',
-                params=params,
-                headers={'Authorization': f'Zoho-oauthtoken {self.access_token}'},
-            )
+        refreshed = False
+        for attempt in range(1, METADATA_ATTEMPTS + 1):
+            try:
+                response = self.client.get(
+                    f'{self.api_domain}/workdrive/api/v1{path}',
+                    params=params,
+                    headers={'Authorization': f'Zoho-oauthtoken {self.access_token}'},
+                )
+            except httpx.TransportError:
+                if attempt == METADATA_ATTEMPTS:
+                    raise
+                time.sleep(2 ** (attempt - 1))
+                continue
             self.requests += 1
-            if response.status_code != 401 or attempt:
-                return response_json(response)
-            self.refresh()
-        raise InventoryError('Zoho authorization retry did not complete.')
+            if response.status_code == 401 and not refreshed:
+                self.refresh()
+                refreshed = True
+                continue
+            if (response.status_code in (408, 425, 429) or response.status_code >= 500) and attempt < METADATA_ATTEMPTS:
+                time.sleep(2 ** (attempt - 1))
+                continue
+            if response.status_code in (408, 425, 429) or response.status_code >= 500:
+                raise TransientProviderError(
+                    f'Zoho metadata temporarily returned HTTP {response.status_code}.')
+            return response_json(response)
+        raise InventoryError('Zoho metadata retry did not complete.')
 
     def get(self, path, params=None):
         if not re.fullmatch(r'/(teamfolders|files)/[A-Za-z0-9]+(?:/files)?', path):

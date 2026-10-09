@@ -37,26 +37,41 @@ from whatsapp import create_whatsapp_router
 @asynccontextmanager
 async def lifespan(application):
     stopping = asyncio.Event()
+    migration_workers = max(1, min(int(os.environ.get('MIKAN_MIGRATION_WORKERS', '3')), 8))
+
+    async def run_operation(operation):
+        try:
+            await asyncio.to_thread(operation)
+        except Exception as error:
+            logging.getLogger(__name__).warning('Worker %s failed (%s)', operation.__name__, type(error).__name__)
 
     async def worker():
         while not stopping.is_set():
-            for operation in (deliver_share_emails, tick, cleanup_trash, process_migrations):
-                try:
-                    await asyncio.to_thread(operation)
-                except Exception as error:
-                    logging.getLogger(__name__).warning('Worker %s failed (%s)', operation.__name__, type(error).__name__)
+            for operation in (deliver_share_emails, tick, cleanup_trash):
+                await run_operation(operation)
             try:
                 await asyncio.wait_for(stopping.wait(), timeout=15)
             except TimeoutError:
                 pass
 
-    task = asyncio.create_task(worker()) if os.environ.get('MIKAN_AUTOMATION_ENABLED', 'true').lower() == 'true' else None
+    async def migration_worker():
+        while not stopping.is_set():
+            await run_operation(process_migrations)
+            try:
+                await asyncio.wait_for(stopping.wait(), timeout=1)
+            except TimeoutError:
+                pass
+
+    tasks = []
+    if os.environ.get('MIKAN_AUTOMATION_ENABLED', 'true').lower() == 'true':
+        tasks = [asyncio.create_task(worker())]
+        tasks.extend(asyncio.create_task(migration_worker()) for _ in range(migration_workers))
     try:
         yield
     finally:
         stopping.set()
-        if task:
-            await task
+        if tasks:
+            await asyncio.gather(*tasks)
 
 
 app = FastAPI(title="Mikan API", lifespan=lifespan)

@@ -4,13 +4,14 @@ from io import BytesIO
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
+import httpx
 from botocore.exceptions import ClientError
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from database import get_db
 from zoho_inventory import InventoryError
-from zoho_migration import MIGRATION_FILE_BYTES, MIKAN_ROOT_ID, MigrationDeferred, create_migration_router, current_entry, download_historical, exact_source_size, execute_job, historical_url, historical_versions, inventory_folder, migration_file_limit, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_folder, transfer_item, try_lock_root, upload_multipart, verify_ready_checkpoint
+from zoho_migration import MIGRATION_FILE_BYTES, MIKAN_ROOT_ID, MigrationDeferred, create_migration_router, current_entry, download_historical, exact_source_size, execute_job, historical_url, historical_versions, inventory_folder, migration_file_limit, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_folder, storage_preflight, transfer_item, try_lock_root, upload_multipart, verify_ready_checkpoint
 
 
 class Transaction:
@@ -378,6 +379,67 @@ class ZohoMigrationTests(unittest.TestCase):
         publish = next(call for call in connection.execute.call_args_list if "SET state='ready',etag=" in call.args[0])
         self.assertEqual(publish.args[1][:2], ('etag-1', 'version-1'))
 
+    @patch('zoho_migration.time.sleep')
+    @patch('zoho_migration.transfer_item_once')
+    def test_item_transfer_retries_transient_transport_failure(self, transfer_once, sleep):
+        transfer_once.side_effect = [httpx.ReadTimeout('temporary'), None]
+        connection = Mock()
+        reader = Mock()
+        client = Mock()
+        storage = {'bucket': 'bucket'}
+        job = {'id': uuid4()}
+        item = {'id': 42}
+
+        transfer_item(connection, reader, client, storage, job, item)
+
+        self.assertEqual(transfer_once.call_count, 2)
+        sleep.assert_called_once_with(1)
+
+    @patch('zoho_migration.time.sleep')
+    @patch('zoho_migration.transfer_item_once')
+    def test_item_transfer_retries_transient_storage_response(self, transfer_once, sleep):
+        temporary = ClientError(
+            {'Error': {'Code': 'ServiceUnavailable'}, 'ResponseMetadata': {'HTTPStatusCode': 503}},
+            'GetObject',
+        )
+        transfer_once.side_effect = [temporary, None]
+
+        transfer_item(Mock(), Mock(), Mock(), {'bucket': 'bucket'}, {'id': uuid4()}, {'id': 42})
+
+        self.assertEqual(transfer_once.call_count, 2)
+        sleep.assert_called_once_with(1)
+
+    @patch('zoho_migration.time.sleep')
+    @patch('zoho_migration.transfer_item_once')
+    def test_item_transfer_does_not_retry_permanent_storage_response(self, transfer_once, sleep):
+        denied = ClientError(
+            {'Error': {'Code': 'AccessDenied'}, 'ResponseMetadata': {'HTTPStatusCode': 403}},
+            'PutObject',
+        )
+        transfer_once.side_effect = denied
+
+        with self.assertRaises(ClientError):
+            transfer_item(Mock(), Mock(), Mock(), {'bucket': 'bucket'}, {'id': uuid4()}, {'id': 42})
+
+        transfer_once.assert_called_once()
+        sleep.assert_not_called()
+
+    @patch('zoho_migration.time.sleep')
+    def test_storage_preflight_retries_transient_response(self, sleep):
+        client = Mock()
+        client.head_bucket.side_effect = [
+            ClientError(
+                {'Error': {'Code': 'SlowDown'}, 'ResponseMetadata': {'HTTPStatusCode': 503}},
+                'HeadBucket',
+            ),
+            {},
+        ]
+
+        storage_preflight(client, {'bucket': 'bucket'}, {'id': uuid4()})
+
+        self.assertEqual(client.head_bucket.call_count, 2)
+        sleep.assert_called_once_with(1)
+
     @patch('zoho_migration.object_head')
     def test_multipart_upload_resumes_confirmed_parts(self, object_head):
         size = 32
@@ -672,12 +734,38 @@ class ZohoMigrationTests(unittest.TestCase):
         connection = Mock()
         connection.__enter__ = Mock(return_value=connection)
         connection.__exit__ = Mock(return_value=False)
-        connection.execute.return_value.fetchone.return_value = None
+        connection.execute.return_value.fetchall.return_value = []
         connect.return_value = connection
         process_migrations()
         query = connection.execute.call_args_list[0].args[0]
         self.assertIn("status IN ('queued','inventory','transferring','verifying')", query)
         self.assertNotIn("'failed'", query)
+
+    @patch('zoho_migration.execute_job')
+    @patch('zoho_migration.connect')
+    def test_worker_skips_locked_folder_and_claims_next_job(self, connect, execute_job):
+        first = {'id': uuid4(), 'company_id': 7, 'source_folder_id': 'folder1'}
+        second = {'id': uuid4(), 'company_id': 7, 'source_folder_id': 'folder2'}
+        connection = Mock()
+        connection.__enter__ = Mock(return_value=connection)
+        connection.__exit__ = Mock(return_value=False)
+
+        def execute(query, values=None):
+            result = Mock()
+            if 'FROM zoho_migration_job' in query:
+                result.fetchall.return_value = [first, second]
+            elif 'pg_try_advisory_lock' in query:
+                result.fetchone.return_value = {'acquired': values == ('zoho-migration:7:folder2',)}
+            return result
+
+        connection.execute.side_effect = execute
+        connect.return_value = connection
+
+        process_migrations()
+
+        execute_job.assert_called_once_with(connection, second)
+        connection.execute.assert_any_call(
+            'SELECT pg_advisory_unlock(hashtextextended(%s,0))', ('zoho-migration:7:folder2',))
 
     @patch('zoho_migration.execute_job', side_effect=HTTPException(404, 'Parent folder not found.'))
     @patch('zoho_migration.connect')
@@ -690,7 +778,7 @@ class ZohoMigrationTests(unittest.TestCase):
         def execute(query, *_args):
             result = Mock()
             if 'FROM zoho_migration_job' in query:
-                result.fetchone.return_value = job
+                result.fetchall.return_value = [job]
             elif 'pg_try_advisory_lock' in query:
                 result.fetchone.return_value = {'acquired': True}
             return result
@@ -703,6 +791,34 @@ class ZohoMigrationTests(unittest.TestCase):
         failed = next(call for call in connection.execute.call_args_list
                       if "status='failed'" in call.args[0])
         self.assertEqual(failed.args[1], ('Parent folder not found.', job['id']))
+
+    @patch('zoho_migration.execute_job', side_effect=httpx.ReadTimeout('temporary'))
+    @patch('zoho_migration.connect')
+    def test_worker_defers_exhausted_transient_failure_without_failing_job(self, connect, _execute_job):
+        job = {'id': uuid4(), 'company_id': 7, 'source_folder_id': 'folder1'}
+        connection = Mock()
+        connection.__enter__ = Mock(return_value=connection)
+        connection.__exit__ = Mock(return_value=False)
+
+        def execute(query, *_args):
+            result = Mock()
+            if 'FROM zoho_migration_job' in query:
+                result.fetchall.return_value = [job]
+            elif 'pg_try_advisory_lock' in query:
+                result.fetchone.return_value = {'acquired': True}
+            return result
+
+        connection.execute.side_effect = execute
+        connect.return_value = connection
+
+        process_migrations()
+
+        paused = next(call for call in connection.execute.call_args_list
+                      if "phase='Waiting for provider'" in call.args[0])
+        self.assertEqual(paused.args[1], (job['id'],))
+        self.assertFalse(any("status='failed'" in call.args[0] for call in connection.execute.call_args_list))
+        query = connection.execute.call_args_list[0].args[0]
+        self.assertIn("phase<>'Waiting for provider'", query)
 
     @patch('zoho_migration.destination_storage')
     @patch('zoho_migration.create_root_folder')

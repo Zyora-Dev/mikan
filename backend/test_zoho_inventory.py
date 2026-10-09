@@ -1,11 +1,12 @@
 import unittest
 import tempfile
 from pathlib import Path
+from unittest.mock import call, patch
 
 import httpx
 
 from zoho_inventory import (
-    InventoryError, WorkDriveReader, children, initialize_roots,
+    InventoryError, TransientProviderError, WorkDriveReader, children, initialize_roots,
     inventory_summary, open_inventory, scan_folder,
 )
 
@@ -57,6 +58,32 @@ class WorkDriveReaderTests(unittest.TestCase):
                 self.assertEqual(request_method(reader), {'data': []})
             self.assertEqual(tokens, ['Zoho-oauthtoken expired', 'Zoho-oauthtoken fresh'])
             self.assertEqual(reader.requests, 2)
+
+    @patch('zoho_inventory.time.sleep')
+    def test_metadata_retries_transient_http_response(self, sleep):
+        responses = iter((
+            httpx.Response(200, json={'access_token': 'token', 'api_domain': 'https://www.zohoapis.in'}),
+            httpx.Response(503),
+            httpx.Response(200, json={'data': []}),
+        ))
+        credentials = {'ZOHO_CLIENT_ID': 'id', 'ZOHO_CLIENT_SECRET': 'secret', 'ZOHO_REFRESH_TOKEN': 'refresh'}
+        with httpx.Client(transport=httpx.MockTransport(lambda _request: next(responses))) as client:
+            reader = WorkDriveReader(client, credentials)
+            self.assertEqual(reader.get('/teamfolders/abc/files'), {'data': []})
+        self.assertEqual(reader.requests, 2)
+        sleep.assert_called_once_with(1)
+
+    @patch('zoho_inventory.time.sleep')
+    def test_metadata_exhaustion_remains_transient(self, sleep):
+        responses = iter((
+            httpx.Response(200, json={'access_token': 'token', 'api_domain': 'https://www.zohoapis.in'}),
+            *(httpx.Response(503) for _ in range(4)),
+        ))
+        credentials = {'ZOHO_CLIENT_ID': 'id', 'ZOHO_CLIENT_SECRET': 'secret', 'ZOHO_REFRESH_TOKEN': 'refresh'}
+        with httpx.Client(transport=httpx.MockTransport(lambda _request: next(responses))) as client:
+            with self.assertRaises(TransientProviderError):
+                WorkDriveReader(client, credentials).get('/teamfolders/abc/files')
+        self.assertEqual(sleep.call_args_list, [call(1), call(2), call(4)])
 
     def test_untrusted_domain_rejected_before_sending_token(self):
         calls = []

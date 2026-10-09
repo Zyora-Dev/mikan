@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 from uuid import UUID, uuid4
 
 import httpx
-from botocore.exceptions import BotoCoreError, ClientError
+from botocore.exceptions import BotoCoreError, ClientError, ConnectionError as BotoConnectionError, HTTPClientError
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, ConfigDict, Field
@@ -18,13 +18,14 @@ from company_root import MAX_ROOT_PATH_LENGTH, ROOT_ENTRIES, RootFolderInput, cr
 from database import connect, get_db
 from uploads import SINGLE_UPLOAD_BYTES, multipart_part_bytes, multipart_parts, storage_client
 from zoho_inventory import InventoryError, WorkDriveReader, children
-from zoho_migrate import check_source_record, download_source, object_head, verify_object
+from zoho_migrate import TransientProviderError, check_source_record, download_source, object_head, verify_object
 from zoho_migrate_general_version import migration_credentials
 
 
 MIKAN_ROOT_ID = '4ligq5e352ffc509e405c863fc17a7c4d83c1'
 DESTINATION_ROOT = 'Mikan'
 MIGRATION_FILE_BYTES = 10_000_000_000
+TRANSFER_ATTEMPTS = 4
 JOB_COLUMNS = '''id,source_folder_id,source_folder_name,destination_path,status,phase,
     folders_total,folders_complete,files_total,files_complete,versions_total,versions_complete,
     bytes_total,bytes_complete,attempts,last_error,created_at,started_at,completed_at,updated_at'''
@@ -513,6 +514,9 @@ def download_historical(reader, item, output):
                 reader.refresh()
                 continue
             if response.status_code != 200 or 'location' in response.headers:
+                if response.status_code in (408, 425, 429) or response.status_code >= 500:
+                    raise TransientProviderError(
+                        f'Zoho historical download temporarily returned HTTP {response.status_code}.')
                 raise InventoryError(f'Zoho historical download HTTP {response.status_code}; migration stopped.')
             for chunk in response.iter_bytes(1024 * 1024):
                 length += len(chunk)
@@ -602,7 +606,34 @@ def upload_multipart(connection, client, storage, table, record, output, metadat
     return object_head(client, storage, record)
 
 
-def transfer_item(connection, reader, client, storage, job, item):
+def transient_storage_error(error):
+    if isinstance(error, (BotoConnectionError, HTTPClientError)):
+        return True
+    if not isinstance(error, ClientError):
+        return False
+    response = error.response or {}
+    status = response.get('ResponseMetadata', {}).get('HTTPStatusCode')
+    code = str(response.get('Error', {}).get('Code', ''))
+    return status in (408, 425, 429) or isinstance(status, int) and status >= 500 or code in {
+        'InternalError', 'InternalServerError', 'RequestTimeout', 'RequestTimeoutException',
+        'ServiceUnavailable', 'SlowDown', 'Throttling', 'ThrottlingException',
+    }
+
+
+def storage_preflight(client, storage, job):
+    for attempt in range(1, TRANSFER_ATTEMPTS + 1):
+        try:
+            return client.head_bucket(Bucket=storage['bucket'])
+        except (BotoCoreError, ClientError) as error:
+            if attempt == TRANSFER_ATTEMPTS or not transient_storage_error(error):
+                raise
+            delay = 2 ** (attempt - 1)
+            LOGGER.warning('Zoho migration job %s storage preflight transient %s; retrying in %ss (%s/%s)',
+                job['id'], type(error).__name__, delay, attempt, TRANSFER_ATTEMPTS)
+            time.sleep(delay)
+
+
+def transfer_item_once(connection, reader, client, storage, job, item):
     table = 'company_root_entry' if item['kind'] == 'file' else 'company_root_version'
     identifier = item['destination_entry_id'] if item['kind'] == 'file' else item['destination_version_id']
     record = connection.execute(f'SELECT * FROM {table} WHERE id=%s AND company_id=%s',
@@ -654,6 +685,21 @@ def transfer_item(connection, reader, client, storage, job, item):
             updated_at=clock_timestamp() WHERE id=%s''', (job['id'], job['id'], job['id'], job['id']))
 
 
+def transfer_item(connection, reader, client, storage, job, item):
+    for attempt in range(1, TRANSFER_ATTEMPTS + 1):
+        try:
+            return transfer_item_once(connection, reader, client, storage, job, item)
+        except (httpx.TransportError, TransientProviderError, BotoCoreError, ClientError) as error:
+            if attempt == TRANSFER_ATTEMPTS or not (
+                    isinstance(error, (httpx.TransportError, TransientProviderError))
+                    or transient_storage_error(error)):
+                raise
+            delay = 2 ** (attempt - 1)
+            LOGGER.warning('Zoho migration job %s item %s transient %s; retrying in %ss (%s/%s)',
+                job['id'], item['id'], type(error).__name__, delay, attempt, TRANSFER_ATTEMPTS)
+            time.sleep(delay)
+
+
 def persist_inventory(connection, job, items):
     with connection.transaction():
         if connection.execute('SELECT id FROM zoho_migration_item WHERE job_id=%s LIMIT 1', (job['id'],)).fetchone():
@@ -698,7 +744,7 @@ def execute_job(connection, job):
         connection.execute("UPDATE zoho_migration_job SET folders_complete=%s,updated_at=clock_timestamp() WHERE id=%s", (len(folders), job['id']))
         client = storage_client(storage)
         try:
-            client.head_bucket(Bucket=storage['bucket'])
+            storage_preflight(client, storage, job)
             for kind, phase in (('file', 'Current files'), ('version', 'File versions')):
                 connection.execute('UPDATE zoho_migration_job SET status=%s,phase=%s,updated_at=clock_timestamp() WHERE id=%s',
                     ('transferring', phase, job['id']))
@@ -732,13 +778,20 @@ def execute_job(connection, job):
 def process_migrations():
     with connect() as connection:
         connection.autocommit = True
-        job = connection.execute("""SELECT * FROM zoho_migration_job
+        jobs = connection.execute("""SELECT * FROM zoho_migration_job
             WHERE status IN ('queued','inventory','transferring','verifying')
-            ORDER BY updated_at,id FOR UPDATE SKIP LOCKED LIMIT 1""").fetchone()
+            AND (phase<>'Waiting for provider' OR updated_at<=clock_timestamp()-INTERVAL '30 seconds')
+            ORDER BY updated_at,id LIMIT 32""").fetchall()
+        job = None
+        lock_key = None
+        for candidate in jobs:
+            candidate_lock = f"zoho-migration:{candidate['company_id']}:{candidate['source_folder_id']}"
+            if connection.execute('SELECT pg_try_advisory_lock(hashtextextended(%s,0)) AS acquired',
+                    (candidate_lock,)).fetchone()['acquired']:
+                job = candidate
+                lock_key = candidate_lock
+                break
         if not job:
-            return
-        lock_key = f"zoho-migration:{job['company_id']}:{job['source_folder_id']}"
-        if not connection.execute('SELECT pg_try_advisory_lock(hashtextextended(%s,0)) AS acquired', (lock_key,)).fetchone()['acquired']:
             return
         try:
             execute_job(connection, job)
@@ -750,6 +803,14 @@ def process_migrations():
             connection.execute("""UPDATE zoho_migration_job SET status='failed',phase='Stopped',last_error=%s,
                 updated_at=clock_timestamp() WHERE id=%s""", (detail, job['id']))
         except (InventoryError, httpx.HTTPError, OSError, ValueError, BotoCoreError, ClientError) as error:
+            if (isinstance(error, (httpx.TransportError, TransientProviderError))
+                    or transient_storage_error(error)):
+                LOGGER.warning('Zoho migration job %s paused after transient %s; automatic retry follows',
+                    job['id'], type(error).__name__)
+                connection.execute("""UPDATE zoho_migration_job SET phase='Waiting for provider',
+                    last_error='Temporary provider interruption; retrying automatically.',
+                    updated_at=clock_timestamp() WHERE id=%s""", (job['id'],))
+                return
             detail = str(error) if isinstance(error, InventoryError) else 'Migration interrupted by a provider or storage error. Retry resumes verified items.'
             LOGGER.warning('Zoho migration job %s failed (%s)', job['id'], type(error).__name__)
             connection.execute("""UPDATE zoho_migration_job SET status='failed',phase='Stopped',last_error=%s,

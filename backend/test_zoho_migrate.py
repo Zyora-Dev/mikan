@@ -10,7 +10,7 @@ import httpx
 from botocore.exceptions import ClientError
 
 import test_company_root
-from zoho_inventory import InventoryError, WorkDriveReader, initialize_roots, open_inventory
+from zoho_inventory import InventoryError, TransientProviderError, WorkDriveReader, initialize_roots, open_inventory
 from zoho_migrate import (
     COMPANY_NAME, GENERAL_ID, destination_context, download_source, load_plan,
     main, migrate, migration_dsn, plan_summary, reserve_destination, verify_source,
@@ -151,15 +151,13 @@ class MigrationTests(SourceFixture, unittest.TestCase):
 
     def test_download_host_redirect_size_and_rate_limit_guards(self):
         plan = sample_plan()
-        for mode in ('host', 'redirect', 'short', 'large', 'rate_limit'):
+        for mode in ('host', 'redirect', 'short', 'large'):
             with self.subTest(mode=mode):
                 reader = self.source_reader(plan)
                 if mode == 'host':
                     self.source_records['file2']['attributes']['download_url'] = 'https://untrusted.invalid/file'
                 if mode == 'redirect':
                     self.download_status = 302
-                if mode == 'rate_limit':
-                    self.download_status = 429
                 if mode == 'short':
                     self.download_content = b'short'
                 if mode == 'large':
@@ -167,6 +165,12 @@ class MigrationTests(SourceFixture, unittest.TestCase):
                 with self.assertRaises(InventoryError):
                     download_source(reader, plan[-1], io.BytesIO())
                 self.assertEqual(len(self.download_requests), 0 if mode == 'host' else 1)
+
+        reader = self.source_reader(plan)
+        self.download_status = 429
+        with self.assertRaises(TransientProviderError):
+            download_source(reader, plan[-1], io.BytesIO())
+        self.assertEqual(len(self.download_requests), 1)
 
     def test_destination_and_confirmation_never_fall_back_to_local(self):
         for dsn in ('', 'dbname=mikan', 'host=/tmp dbname=mikan', 'host=localhost dbname=mikan', 'host=127.0.0.1 dbname=mikan'):

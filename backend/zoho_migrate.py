@@ -17,7 +17,7 @@ from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
 
 from zoho_authorize import CREDENTIALS_PATH, AuthorizationError, load_credentials
-from zoho_inventory import REPORT_DIRECTORY, ROOT_IDS, InventoryError, WorkDriveReader, children
+from zoho_inventory import REPORT_DIRECTORY, ROOT_IDS, InventoryError, TransientProviderError, WorkDriveReader, children
 
 
 GENERAL_ID = ROOT_IDS[0]
@@ -123,6 +123,8 @@ def download_source(reader, entry, output):
     with reader.client.stream('GET', url, follow_redirects=False,
             headers={'Authorization': f'Zoho-oauthtoken {reader.access_token}', 'Accept-Encoding': 'identity'}) as response:
         if response.status_code != 200:
+            if response.status_code in (408, 425, 429) or response.status_code >= 500:
+                raise TransientProviderError(f'Zoho download temporarily returned HTTP {response.status_code}.')
             raise InventoryError(f'Zoho download HTTP {response.status_code}; no retry or redirect followed.')
         for chunk in response.iter_bytes(1024 * 1024):
             length += len(chunk)
