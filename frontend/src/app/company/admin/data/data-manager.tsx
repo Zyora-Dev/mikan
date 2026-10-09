@@ -166,7 +166,7 @@ function MigrationManager() {
     <DataViews view="migration" />
     <nav className={styles.migrationBreadcrumb} aria-label="Zoho migration folder">
       <button type="button" onClick={() => navigate([])} aria-current={!ancestorIds.length ? "page" : undefined}><Folder size={16} />Mikan</button>
-      {state.data?.breadcrumbs.map((crumb, index) => <span key={crumb.source_folder_id}><ChevronRight size={15} /><button type="button" onClick={() => navigate(ancestorIds.slice(0, index + 1))} aria-current={index === ancestorIds.length - 1 ? "page" : undefined}>{crumb.name}</button></span>)}
+      {state.data?.breadcrumbs.slice(1).map((crumb, index) => <span key={crumb.source_folder_id}><ChevronRight size={15} /><button type="button" onClick={() => navigate(ancestorIds.slice(0, index + 1))} aria-current={index === ancestorIds.length - 1 ? "page" : undefined}>{crumb.name}</button></span>)}
     </nav>
     {!!selected.length && <div className={styles.migrationSelection} role="status"><span>{selected.length} folder{selected.length === 1 ? "" : "s"} selected</span><button className={shared.primary} disabled={!!busy} onClick={() => void runSelected()}><ArrowRightLeft size={16} />{busy === "batch" ? "Queuing..." : "Migrate selected"}</button><button className={shared.secondary} disabled={!!busy} onClick={() => setSelected([])}>Clear</button></div>}
     {notice && <p className={shared.notice} role="status">{notice}</p>}
