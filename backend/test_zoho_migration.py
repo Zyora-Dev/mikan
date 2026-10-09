@@ -4,12 +4,13 @@ from io import BytesIO
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
+from botocore.exceptions import ClientError
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from database import get_db
 from zoho_inventory import InventoryError
-from zoho_migration import MIKAN_ROOT_ID, MigrationDeferred, create_migration_router, current_entry, download_historical, exact_source_size, execute_job, historical_url, historical_versions, inventory_folder, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_folder, transfer_item, try_lock_root, verify_ready_checkpoint
+from zoho_migration import MIGRATION_FILE_BYTES, MIKAN_ROOT_ID, MigrationDeferred, create_migration_router, current_entry, download_historical, exact_source_size, execute_job, historical_url, historical_versions, inventory_folder, migration_file_limit, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_folder, transfer_item, try_lock_root, upload_multipart, verify_ready_checkpoint
 
 
 class Transaction:
@@ -377,6 +378,68 @@ class ZohoMigrationTests(unittest.TestCase):
         publish = next(call for call in connection.execute.call_args_list if "SET state='ready',etag=" in call.args[0])
         self.assertEqual(publish.args[1][:2], ('etag-1', 'version-1'))
 
+    @patch('zoho_migration.object_head')
+    def test_multipart_upload_resumes_confirmed_parts(self, object_head):
+        size = 32
+        part_bytes = 16
+        record = {'id': uuid4(), 'state': 'pending', 'size_bytes': size, 'object_key': 'root/large',
+                  'multipart_upload_id': 'upload-1', 'multipart_part_bytes': part_bytes}
+        connection = Mock()
+        connection.transaction.return_value = Transaction()
+        client = Mock()
+        client.list_parts.return_value = {'Parts': [
+            {'PartNumber': 1, 'Size': part_bytes, 'ETag': 'part-1'},
+        ], 'IsTruncated': False}
+        client.upload_part.return_value = {'ETag': 'part-2'}
+        client.complete_multipart_upload.return_value = {'ETag': 'complete'}
+        object_head.return_value = {'ContentLength': size, 'ETag': 'complete'}
+
+        head = upload_multipart(connection, client, {'bucket': 'bucket'}, 'company_root_entry', record,
+                                BytesIO(b'x' * size), {'sha256': 'a' * 64})
+
+        self.assertEqual(head['ContentLength'], size)
+        self.assertEqual(client.upload_part.call_args.kwargs['PartNumber'], 2)
+        self.assertEqual(client.complete_multipart_upload.call_args.kwargs['MultipartUpload']['Parts'], [
+            {'PartNumber': 1, 'ETag': 'part-1'},
+            {'PartNumber': 2, 'ETag': 'part-2'},
+        ])
+
+    @patch('zoho_migration.object_head')
+    def test_multipart_upload_recovers_completed_object_by_identity(self, object_head):
+        identifier = uuid4()
+        digest = 'a' * 64
+        record = {'id': identifier, 'state': 'pending', 'size_bytes': 32, 'object_key': 'root/large',
+                  'multipart_upload_id': 'upload-1', 'multipart_part_bytes': 16}
+        client = Mock()
+        client.list_parts.side_effect = ClientError(
+            {'Error': {'Code': 'NoSuchUpload', 'Message': 'missing'}}, 'ListParts')
+        object_head.return_value = {
+            'ContentLength': 32, 'ETag': 'complete',
+            'Metadata': {'mikan-upload': str(identifier), 'sha256': digest},
+        }
+
+        head = upload_multipart(Mock(), client, {'bucket': 'bucket'}, 'company_root_entry', record,
+                                BytesIO(b'x' * 32), {'sha256': digest})
+
+        self.assertEqual(head['ETag'], 'complete')
+        client.create_multipart_upload.assert_not_called()
+
+    @patch('zoho_migration.object_head')
+    def test_multipart_upload_rejects_completed_object_with_wrong_identity(self, object_head):
+        record = {'id': uuid4(), 'state': 'pending', 'size_bytes': 32, 'object_key': 'root/large',
+                  'multipart_upload_id': 'upload-1', 'multipart_part_bytes': 16}
+        client = Mock()
+        client.list_parts.side_effect = ClientError(
+            {'Error': {'Code': 'NoSuchUpload', 'Message': 'missing'}}, 'ListParts')
+        object_head.return_value = {
+            'ContentLength': 32, 'ETag': 'complete',
+            'Metadata': {'mikan-upload': 'different', 'sha256': 'a' * 64},
+        }
+
+        with self.assertRaisesRegex(InventoryError, 'identity or size mismatch'):
+            upload_multipart(Mock(), client, {'bucket': 'bucket'}, 'company_root_entry', record,
+                             BytesIO(b'x' * 32), {'sha256': 'a' * 64})
+
     def test_unstarted_duplicate_current_version_checkpoint_is_removed(self):
         version_id = uuid4()
         file_item = {'id': 1, 'kind': 'file', 'source_id': 'file123', 'source_parent_id': 'folder123',
@@ -670,6 +733,12 @@ class ZohoMigrationTests(unittest.TestCase):
         self.assertEqual(payload.name, 'Mikan')
         self.assertEqual(payload.parent, '')
         self.assertEqual(source_id, MIKAN_ROOT_ID)
+
+    def test_migration_file_limit_is_10_gb_or_lower_company_policy(self):
+        self.assertEqual(MIGRATION_FILE_BYTES, 10_000_000_000)
+        self.assertEqual(migration_file_limit({'max_file_bytes': 12_000_000_000}), 10_000_000_000)
+        self.assertEqual(migration_file_limit({'max_file_bytes': 10_000_000_000}), 10_000_000_000)
+        self.assertEqual(migration_file_limit({'max_file_bytes': 7_000_000_000}), 7_000_000_000)
 
     @patch('zoho_migration.migration_credentials', return_value={})
     @patch('zoho_migration.WorkDriveReader')

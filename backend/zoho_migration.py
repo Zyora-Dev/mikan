@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from company_root import MAX_ROOT_PATH_LENGTH, ROOT_ENTRIES, RootFolderInput, create_root_folder
 from database import connect, get_db
-from uploads import storage_client
+from uploads import SINGLE_UPLOAD_BYTES, multipart_part_bytes, multipart_parts, storage_client
 from zoho_inventory import InventoryError, WorkDriveReader, children
 from zoho_migrate import check_source_record, download_source, object_head, verify_object
 from zoho_migrate_general_version import migration_credentials
@@ -24,6 +24,7 @@ from zoho_migrate_general_version import migration_credentials
 
 MIKAN_ROOT_ID = '4ligq5e352ffc509e405c863fc17a7c4d83c1'
 DESTINATION_ROOT = 'Mikan'
+MIGRATION_FILE_BYTES = 10_000_000_000
 JOB_COLUMNS = '''id,source_folder_id,source_folder_name,destination_path,status,phase,
     folders_total,folders_complete,files_total,files_complete,versions_total,versions_complete,
     bytes_total,bytes_complete,attempts,last_error,created_at,started_at,completed_at,updated_at'''
@@ -354,6 +355,10 @@ def destination_storage(connection, company_id):
     return rows[0]
 
 
+def migration_file_limit(storage):
+    return min(storage['max_file_bytes'], MIGRATION_FILE_BYTES)
+
+
 def reserve_items(connection, job, items):
     from insights import COMPANY_STORAGE_CAPACITY_BYTES
 
@@ -368,7 +373,7 @@ def reserve_items(connection, job, items):
         storage = destination_storage(connection, job['company_id'])
         files = [item for item in items if item['kind'] == 'file']
         versions = [item for item in items if item['kind'] == 'version']
-        if any(item['size_bytes'] > min(storage['max_file_bytes'], 5_000_000_000) for item in [*files, *versions]):
+        if any(item['size_bytes'] > migration_file_limit(storage) for item in [*files, *versions]):
             raise InventoryError('A source file or version exceeds the configured destination limit.')
         allocated = connection.execute(
             'SELECT coalesce(sum(greatest(storage_quota_bytes,storage_used_bytes)),0) AS bytes FROM team WHERE company_id=%s',
@@ -533,6 +538,70 @@ def verify_ready_checkpoint(client, storage, record, digest):
     return head
 
 
+def upload_multipart(connection, client, storage, table, record, output, metadata):
+    identifier = record['id']
+    upload_id = record.get('multipart_upload_id')
+    part_bytes = record.get('multipart_part_bytes') or multipart_part_bytes(record['size_bytes'])
+    parts = []
+    if upload_id:
+        try:
+            parts = multipart_parts(client, storage, {**record,
+                'multipart_upload_id': upload_id, 'multipart_part_bytes': part_bytes})
+        except ClientError as error:
+            if error.response.get('Error', {}).get('Code') != 'NoSuchUpload':
+                raise
+            head = object_head(client, storage, record)
+            if head:
+                completed_metadata = head.get('Metadata', {})
+                if (head.get('ContentLength') != record['size_bytes'] or not head.get('ETag')
+                        or completed_metadata.get('mikan-upload') != str(identifier)
+                        or completed_metadata.get('sha256') != metadata['sha256']):
+                    raise InventoryError('Completed multipart destination identity or size mismatch.')
+                return head
+            with connection.transaction():
+                cleared = connection.execute(f'''UPDATE {table} SET multipart_upload_id=NULL,multipart_part_bytes=NULL
+                    WHERE id=%s AND state='pending' AND multipart_upload_id=%s RETURNING id''',
+                    (identifier, upload_id)).fetchone()
+                if not cleared:
+                    raise InventoryError('Pending multipart destination state changed.')
+            upload_id = None
+    if not upload_id:
+        if object_head(client, storage, record):
+            raise InventoryError('Destination object already exists; nothing overwritten.')
+        multipart_metadata = {**metadata, 'mikan-upload': str(identifier)}
+        result = client.create_multipart_upload(Bucket=storage['bucket'], Key=record['object_key'],
+            ContentType='application/octet-stream', Metadata=multipart_metadata)
+        upload_id = result.get('UploadId')
+        if not upload_id:
+            raise InventoryError('Destination did not create a multipart upload.')
+        with connection.transaction():
+            bound = connection.execute(f'''UPDATE {table} SET multipart_upload_id=%s,multipart_part_bytes=%s
+                WHERE id=%s AND state='pending' AND multipart_upload_id IS NULL RETURNING id''',
+                (upload_id, part_bytes, identifier)).fetchone()
+            if not bound:
+                raise InventoryError('Pending multipart destination state changed.')
+    confirmed = {part['PartNumber']: {'PartNumber': part['PartNumber'], 'ETag': part['ETag']} for part in parts}
+    count = (record['size_bytes'] + part_bytes - 1) // part_bytes
+    for number in range(1, count + 1):
+        if number in confirmed:
+            continue
+        length = min(part_bytes, record['size_bytes'] - (number - 1) * part_bytes)
+        output.seek((number - 1) * part_bytes)
+        body = output.read(length)
+        if len(body) != length:
+            raise InventoryError('Temporary source part size mismatch.')
+        result = client.upload_part(Bucket=storage['bucket'], Key=record['object_key'], UploadId=upload_id,
+            PartNumber=number, Body=body, ContentLength=length)
+        if not result.get('ETag'):
+            raise InventoryError('Destination did not confirm a multipart part.')
+        confirmed[number] = {'PartNumber': number, 'ETag': result['ETag']}
+    result = client.complete_multipart_upload(Bucket=storage['bucket'], Key=record['object_key'], UploadId=upload_id,
+        MultipartUpload={'Parts': [confirmed[number] for number in range(1, count + 1)]})
+    if not result.get('ETag'):
+        raise InventoryError('Destination did not confirm multipart completion.')
+    return object_head(client, storage, record)
+
+
 def transfer_item(connection, reader, client, storage, job, item):
     table = 'company_root_entry' if item['kind'] == 'file' else 'company_root_version'
     identifier = item['destination_entry_id'] if item['kind'] == 'file' else item['destination_version_id']
@@ -561,13 +630,16 @@ def transfer_item(connection, reader, client, storage, job, item):
                 metadata = {'sha256': digest, 'zoho-source-id': item['source_file_id']}
                 if item['kind'] == 'version':
                     metadata['zoho-source-version-id'] = item['source_version_id']
-                client.put_object(Bucket=storage['bucket'], Key=record['object_key'], Body=output,
-                    ContentLength=item['size_bytes'], ContentType='application/octet-stream', IfNoneMatch='*', Metadata=metadata)
+                if item['size_bytes'] > SINGLE_UPLOAD_BYTES:
+                    upload_multipart(connection, client, storage, table, record, output, metadata)
+                else:
+                    client.put_object(Bucket=storage['bucket'], Key=record['object_key'], Body=output,
+                        ContentLength=item['size_bytes'], ContentType='application/octet-stream', IfNoneMatch='*', Metadata=metadata)
                 record['sha256'] = digest
                 head = verify_object(client, storage, record, digest)
         with connection.transaction():
             published = connection.execute(
-                f"UPDATE {table} SET state='ready',etag=%s,object_version=%s,uploaded_at=clock_timestamp() WHERE id=%s AND company_id=%s AND state='pending' AND sha256=%s RETURNING id",
+                f"UPDATE {table} SET state='ready',etag=%s,object_version=%s,uploaded_at=clock_timestamp(),multipart_upload_id=NULL,multipart_part_bytes=NULL WHERE id=%s AND company_id=%s AND state='pending' AND sha256=%s RETURNING id",
                 (head['ETag'], head.get('VersionId'), identifier, job['company_id'], digest),
             ).fetchone()
             if not published:
