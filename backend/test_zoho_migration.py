@@ -216,6 +216,15 @@ class ZohoMigrationTests(unittest.TestCase):
         with self.assertRaises(InventoryError):
             exact_source_size({'size': '42 KB'})
 
+    def test_exact_source_size_prefers_current_file_size_over_retained_storage(self):
+        attributes = {
+            'file_size': '42',
+            'size_in_bytes': '42',
+            'storage_info': {'size_in_bytes': '126'},
+        }
+
+        self.assertEqual(exact_source_size(attributes), 42)
+
     def test_historical_url_falls_back_to_version_download_for_unpreviewable_file(self):
         reader = Mock()
         reader.version_preview_info.return_value = {'data': {'attributes': {

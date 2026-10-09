@@ -116,8 +116,8 @@ def source_size(attributes):
 def exact_source_size(attributes):
     storage = attributes.get('storage_info') or {}
     value = exact_nonnegative_integer(
-        storage.get('size_in_bytes'), attributes.get('size_in_bytes'),
-        attributes.get('file_size'), attributes.get('size'),
+        attributes.get('file_size'), attributes.get('size_in_bytes'),
+        storage.get('size_in_bytes'), attributes.get('size'),
     )
     if value is not None:
         return value
