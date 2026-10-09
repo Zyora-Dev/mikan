@@ -224,6 +224,31 @@ def historical_versions(active_records, approved_records, file_item):
     return list(versions.values()), current[0]['source_id']
 
 
+def disambiguate_duplicate_file_paths(items):
+    files_by_path = {}
+    for item in items:
+        if item['kind'] == 'file':
+            files_by_path.setdefault(item['destination_path'], []).append(item)
+    replacements = {}
+    for path, duplicates in files_by_path.items():
+        if len(duplicates) < 2:
+            continue
+        parent, _, name = path.rpartition('/')
+        stem, extension = os.path.splitext(name)
+        for item in duplicates:
+            disambiguated_name = f"{stem} [Zoho {item['source_id']}]{extension}"
+            disambiguated_path = f'{parent}/{disambiguated_name}' if parent else disambiguated_name
+            if len(disambiguated_name) > 255 or len(disambiguated_path) > MAX_ROOT_PATH_LENGTH:
+                raise InventoryError('Duplicate source file names cannot fit within the destination path limit.')
+            replacements[item['source_id']] = disambiguated_path
+    if not replacements:
+        return items
+    return [
+        {**item, 'destination_path': replacements.get(item['source_file_id'] or item['source_id'], item['destination_path'])}
+        for item in items
+    ]
+
+
 def source_directory(reader, ancestor_ids):
     if any(not re.fullmatch(r'[A-Za-z0-9]{1,200}', identifier) for identifier in ancestor_ids):
         raise InventoryError('Invalid source folder ancestry.')
@@ -355,7 +380,7 @@ def inventory_folder(reader, source_id, root_name, destination_path=None):
     visit(ancestry[-1], parent_id, parent_path, root_name)
     if len({(item['kind'], item['source_id']) for item in items}) != len(items):
         raise InventoryError('Repeated source item detected during inventory.')
-    return items
+    return disambiguate_duplicate_file_paths(items)
 
 
 def list_source_folders():
@@ -931,6 +956,28 @@ def persist_inventory(connection, job, items):
                 sum(item['size_bytes'] for item in items if item['kind'] in ('file', 'version')), job['id']))
 
 
+def repair_duplicate_file_paths(connection, job, items):
+    repaired = disambiguate_duplicate_file_paths(items)
+    changes = [
+        (updated, original) for updated, original in zip(repaired, items)
+        if updated['destination_path'] != original['destination_path']
+    ]
+    if not changes:
+        return items
+    if any(original['state'] != 'pending' or original['sha256'] is not None
+           or original['destination_entry_id'] is not None or original['destination_version_id'] is not None
+           for _updated, original in changes):
+        raise InventoryError('Duplicate source file names conflict with an existing migration checkpoint.')
+    with connection.transaction():
+        for updated, original in changes:
+            connection.execute('''UPDATE zoho_migration_item SET destination_path=%s,updated_at=clock_timestamp()
+                WHERE id=%s AND job_id=%s AND state='pending' AND sha256 IS NULL
+                    AND destination_entry_id IS NULL AND destination_version_id IS NULL''',
+                (updated['destination_path'], original['id'], job['id']))
+    return connection.execute('SELECT * FROM zoho_migration_item WHERE job_id=%s ORDER BY destination_path,kind,source_id',
+        (job['id'],)).fetchall()
+
+
 def execute_job(connection, job):
     credentials = migration_credentials()
     items = connection.execute('SELECT * FROM zoho_migration_item WHERE job_id=%s ORDER BY destination_path,kind,source_id',
@@ -958,6 +1005,7 @@ def execute_job(connection, job):
                 connection.execute('SELECT pg_advisory_unlock(hashtextextended(%s,0))', (inventory_lock,))
         items = repair_legacy_destination(connection, job, items)
         items = prune_unstarted_current_version_duplicates(connection, reader, job, items)
+        items = repair_duplicate_file_paths(connection, job, items)
         storage = reserve_items(connection, job, items)
         items = connection.execute('SELECT * FROM zoho_migration_item WHERE job_id=%s ORDER BY destination_path,kind,source_id',
             (job['id'],)).fetchall()

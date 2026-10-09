@@ -1,5 +1,10 @@
 # Mikan Progress
 
+## Zoho Duplicate Filename Collision Repair - 2026-10-09 (Local Verified)
+- Read-only production SQL isolated job `56003486-5120-4ca6-b330-d99e676604f3` (`4. 2025`) to two distinct Zoho current files in the same source folder with the identical name `100m³ Tank GA.bak`. Their source IDs, sizes (89,328 and 115,969 bytes), and modified timestamps differ, so neither is a duplicate version or safe to discard. Destination reservation created the first row inside its transaction, detected the second path collision, and rolled the entire transaction back; no destination row or object was left behind.
+- Inventory now deterministically disambiguates every same-folder duplicate current filename with its full Zoho source ID before persistence, while retaining the exact original source name and metadata. Historical versions follow their owning file's disambiguated path. Existing persisted inventories receive the same repair only when every affected file/version checkpoint remains pending, unhashed, and unreserved; any started checkpoint still fails closed.
+- PASS all 63 focused migration tests, including duplicate current files and their version path, Python compilation, edited-file diagnostics, and patch whitespace validation. Production code/data is unchanged, `4. 2025` has not been retried, and `1. 2022` was not modified.
+
 ## Zoho Inventory Scheduler Throttle Repair - 2026-10-09 (Production Verified)
 - Production logs confirmed two deep source inventories repeatedly failed together with `TransientProviderError`, then restarted from their roots every 30 seconds because neither had persisted inventory. Added a PostgreSQL advisory lock scoped to the company so only one no-items job traverses Zoho metadata at a time; the lock is released immediately after atomic inventory persistence and on every error path.
 - Jobs with persisted inventory never request the inventory lock. Scheduler ordering prioritizes `transferring` and `verifying` jobs, preserving the existing three migration workers and three global item-transfer slots while other selected folders wait for their inventory turn without incrementing attempts or calling Zoho.

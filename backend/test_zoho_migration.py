@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from database import get_db
 from zoho_inventory import InventoryError
-from zoho_migration import INVENTORY_RETRY_SECONDS, MIGRATION_FILE_BYTES, MIKAN_ROOT_ID, ZOHO_TOKEN_STATE, MigrationDeferred, authenticated_reader, create_migration_router, current_entry, download_historical, exact_source_size, execute_job, historical_url, historical_versions, inventory_folder, migration_file_limit, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_directory, source_folder, storage_preflight, transfer_item, transfer_items_parallel, try_lock_root, upload_multipart, verify_ready_checkpoint
+from zoho_migration import INVENTORY_RETRY_SECONDS, MIGRATION_FILE_BYTES, MIKAN_ROOT_ID, ZOHO_TOKEN_STATE, MigrationDeferred, authenticated_reader, create_migration_router, current_entry, disambiguate_duplicate_file_paths, download_historical, exact_source_size, execute_job, historical_url, historical_versions, inventory_folder, migration_file_limit, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_directory, source_folder, storage_preflight, transfer_item, transfer_items_parallel, try_lock_root, upload_multipart, verify_ready_checkpoint
 
 
 class Transaction:
@@ -143,6 +143,25 @@ class ZohoMigrationTests(unittest.TestCase):
 
         with self.assertRaisesRegex(InventoryError, 'repeated or cyclic folder identity'):
             inventory_folder(Mock(), 'eugine123', 'Eugine')
+
+    def test_duplicate_file_names_preserve_both_source_identities_and_versions(self):
+        items = [
+            {'kind': 'file', 'source_id': 'file111', 'source_file_id': 'file111',
+             'source_name': 'Drawing.bak', 'destination_path': 'Mikan/Folder/Drawing.bak'},
+            {'kind': 'version', 'source_id': 'file111-1', 'source_file_id': 'file111',
+             'source_name': 'Drawing.bak', 'destination_path': 'Mikan/Folder/Drawing.bak'},
+            {'kind': 'file', 'source_id': 'file222', 'source_file_id': 'file222',
+             'source_name': 'Drawing.bak', 'destination_path': 'Mikan/Folder/Drawing.bak'},
+        ]
+
+        repaired = disambiguate_duplicate_file_paths(items)
+
+        self.assertEqual([item['destination_path'] for item in repaired], [
+            'Mikan/Folder/Drawing [Zoho file111].bak',
+            'Mikan/Folder/Drawing [Zoho file111].bak',
+            'Mikan/Folder/Drawing [Zoho file222].bak',
+        ])
+        self.assertEqual([item['source_name'] for item in repaired], ['Drawing.bak'] * 3)
 
     @patch('zoho_migration.children', return_value=[])
     def test_inventory_rejects_root_missing_from_mikan_listing(self, _children):
