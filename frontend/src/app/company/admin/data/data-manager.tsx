@@ -16,9 +16,10 @@ type FolderRow = Drive & { path: string; created_at: string };
 type EventRow = { id: number; actor: string; action: string; subject: string; detail: string; created_at: string };
 type Person = { id: number; name: string; team_id: number; team_name: string; email: string };
 type View = "files" | "folders" | "trash" | "activity";
-type MigrationJob = { id: string; status: "queued" | "inventory" | "transferring" | "verifying" | "complete" | "failed"; phase: string; folders_total: number; folders_complete: number; files_total: number; files_complete: number; versions_total: number; versions_complete: number; bytes_total: number; bytes_complete: number; attempts: number; last_error: string | null; updated_at: string };
-type MigrationFolder = { source_folder_id: string; name: string; size_bytes: number; job: MigrationJob | null };
-type MigrationData = { items: MigrationFolder[]; source_unavailable: boolean };
+type MigrationJob = { id: string; source_folder_id: string; source_folder_name: string; destination_path: string; status: "queued" | "inventory" | "transferring" | "verifying" | "complete" | "failed"; phase: string; folders_total: number; folders_complete: number; files_total: number; files_complete: number; versions_total: number; versions_complete: number; bytes_total: number; bytes_complete: number; attempts: number; last_error: string | null; updated_at: string };
+type MigrationFolder = { source_folder_id: string; name: string; size_bytes: number; destination_path: string };
+type MigrationBreadcrumb = MigrationFolder;
+type MigrationData = { items: MigrationFolder[]; breadcrumbs: MigrationBreadcrumb[]; jobs: MigrationJob[]; source_unavailable: boolean; error?: string | null };
 type RootRow = { id: string; name: string; path: string; kind: "folder" | "file"; size_bytes: number; state: "pending" | "ready"; created_at: string };
 type RootVersion = { id: string; version_label: string; name: string; size_bytes: number; source_modified_at: string | null; uploaded_at: string | null; current: boolean };
 type Edit = { kind: "file"; action: "edit" | "trash" | "restore"; file: FileRow } | { kind: "folder"; action: "create" | "rename" | "remove"; folder?: FolderRow };
@@ -105,10 +106,15 @@ function MigrationManager() {
   const [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
+  const [ancestorIds, setAncestorIds] = useState<string[]>([]);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
-  const state = useResource<MigrationData>(`${base}/migration`, true, revision);
-  const active = state.data?.items.some(folder => folder.job && !["complete", "failed"].includes(folder.job.status));
+  const browseQuery = ancestorIds.length ? `?ancestor_ids=${encodeURIComponent(ancestorIds.join(","))}` : "";
+  const state = useResource<MigrationData>(`${base}/migration/browse${browseQuery}`, true, revision);
+  const active = state.data?.jobs.some(job => !["complete", "failed"].includes(job.status));
+  const jobsBySource = new Map(state.data?.jobs.map(job => [job.source_folder_id, job]) || []);
+  const visibleSources = new Set(state.data?.items.map(folder => folder.source_folder_id) || []);
+  const otherJobs = state.data?.jobs.filter(job => !visibleSources.has(job.source_folder_id)) || [];
   useEffect(() => {
     if (!active) return;
     const timer = window.setInterval(() => setRevision(value => value + 1), 15000);
@@ -118,9 +124,10 @@ function MigrationManager() {
     if (busy) return;
     setBusy(folder.source_folder_id); setError(""); setNotice("");
     try {
-      if (folder.job?.status === "failed") await teamRequest(`${base}/migration/jobs/${folder.job.id}/retry`, {});
-      else await teamRequest(`${base}/migration/jobs`, { source_folder_id: folder.source_folder_id });
-      setNotice(folder.job?.status === "failed" ? `${folder.name} queued to resume.` : `${folder.name} migration queued.`);
+      const job = jobsBySource.get(folder.source_folder_id);
+      if (job?.status === "failed") await teamRequest(`${base}/migration/jobs/${job.id}/retry`, {});
+      else await teamRequest(`${base}/migration/jobs/batch`, { source_folder_ids: [folder.source_folder_id], ancestor_ids: ancestorIds });
+      setNotice(job?.status === "failed" ? `${folder.name} queued to resume.` : `${folder.name} migration queued.`);
       setRevision(value => value + 1);
     } catch (failure) { setError(failure instanceof Error ? failure.message : "Unable to queue migration."); }
     finally { setBusy(""); }
@@ -129,7 +136,7 @@ function MigrationManager() {
     if (busy || !selected.length) return;
     setBusy("batch"); setError(""); setNotice("");
     try {
-      await teamRequest(`${base}/migration/jobs/batch`, { source_folder_ids: selected });
+      await teamRequest(`${base}/migration/jobs/batch`, { source_folder_ids: selected, ancestor_ids: ancestorIds });
       setNotice(`${selected.length} folder${selected.length === 1 ? "" : "s"} queued for migration.`);
       setSelected([]); setRevision(value => value + 1);
     } catch (failure) { setError(failure instanceof Error ? failure.message : "Unable to queue selected migrations."); }
@@ -146,29 +153,37 @@ function MigrationManager() {
     return `${job.folders_complete}/${job.folders_total} folders, ${job.files_complete}/${job.files_total} files, ${job.versions_complete}/${job.versions_total} versions, ${bytes(job.bytes_complete)}/${bytes(job.bytes_total)}`;
   }
   function action(folder: MigrationFolder) {
-    const job = folder.job;
+    const job = jobsBySource.get(folder.source_folder_id);
     if (job?.status === "complete") return <span className={styles.complete}>Verified</span>;
     if (job && job.status !== "failed") return <span className={styles.running}>{job.phase}</span>;
     return <button className={shared.primary} disabled={!!busy} onClick={() => void run(folder)}><ArrowRightLeft size={16} />{busy === folder.source_folder_id ? "Queuing..." : job?.status === "failed" ? "Retry" : "Migrate"}</button>;
   }
+  function navigate(ids: string[]) {
+    setAncestorIds(ids); setSelected([]); setError(""); setNotice("");
+  }
   return <section className={`${shared.section} ${styles.section}`}>
     <div className={styles.heading}><h1>Data Administration</h1><button className={shared.iconButton} title="Refresh" aria-label="Refresh migration status" onClick={() => setRevision(value => value + 1)}><RefreshCw size={18} /></button></div>
     <DataViews view="migration" />
+    <nav className={styles.migrationBreadcrumb} aria-label="Zoho migration folder">
+      <button type="button" onClick={() => navigate([])} aria-current={!ancestorIds.length ? "page" : undefined}><Folder size={16} />Mikan</button>
+      {state.data?.breadcrumbs.map((crumb, index) => <span key={crumb.source_folder_id}><ChevronRight size={15} /><button type="button" onClick={() => navigate(ancestorIds.slice(0, index + 1))} aria-current={index === ancestorIds.length - 1 ? "page" : undefined}>{crumb.name}</button></span>)}
+    </nav>
     {!!selected.length && <div className={styles.migrationSelection} role="status"><span>{selected.length} folder{selected.length === 1 ? "" : "s"} selected</span><button className={shared.primary} disabled={!!busy} onClick={() => void runSelected()}><ArrowRightLeft size={16} />{busy === "batch" ? "Queuing..." : "Migrate selected"}</button><button className={shared.secondary} disabled={!!busy} onClick={() => setSelected([])}>Clear</button></div>}
     {notice && <p className={shared.notice} role="status">{notice}</p>}
     {error && <p className={shared.formError} role="alert">{error}</p>}
     <LoadState loading={state.loading} error={state.error} retry={() => setRevision(value => value + 1)} />
-    {state.data?.source_unavailable && <div className={styles.sourceWarning} role="status"><AlertTriangle size={19} /><div><strong>Zoho folder listing is temporarily unavailable</strong><p>Only folders with an existing migration job are shown. Their saved progress is preserved; refresh when Zoho is available to restore the complete folder list.</p></div></div>}
-    {state.data && !state.data.items.length && <div className={shared.empty}><Folder size={30} /><h2>No folders found in Zoho Mikan</h2></div>}
+    {state.data?.source_unavailable && <div className={styles.sourceWarning} role="status"><AlertTriangle size={19} /><div><strong>Zoho folder listing is temporarily unavailable</strong><p>{state.data.error || "Saved migration progress remains available. Refresh when Zoho is available to continue browsing."}</p></div></div>}
+    {state.data && !state.data.source_unavailable && !state.data.items.length && <div className={shared.empty}><Folder size={30} /><h2>No child folders found here</h2></div>}
     {!!state.data?.items.length && <div className={styles.migrationList}>{state.data.items.map(folder => {
-      const job = folder.job; const percent = job ? progress(job) : 0;
+      const job = jobsBySource.get(folder.source_folder_id); const percent = job ? progress(job) : 0;
       return <article className={styles.migrationItem} key={folder.source_folder_id}>
-        <div className={styles.migrationMain}>{!job && <input className={styles.migrationCheck} type="checkbox" aria-label={`Select ${folder.name}`} checked={selected.includes(folder.source_folder_id)} disabled={!!busy} onChange={event => setSelected(current => event.target.checked ? [...current, folder.source_folder_id] : current.filter(value => value !== folder.source_folder_id))} />}<span className={styles.migrationIcon}><Folder size={20} /></span><div><h2>{folder.name}</h2><p>{job ? details(job) : folder.size_bytes ? `${bytes(folder.size_bytes)} in Zoho` : "Ready to migrate"}</p>{job && <small>Attempt {job.attempts} / Updated {dateTime(job.updated_at)}</small>}</div></div>
+        <div className={styles.migrationMain}>{!job && <input className={styles.migrationCheck} type="checkbox" aria-label={`Select ${folder.name}`} checked={selected.includes(folder.source_folder_id)} disabled={!!busy} onChange={event => setSelected(current => event.target.checked ? [...current, folder.source_folder_id] : current.filter(value => value !== folder.source_folder_id))} />}<span className={styles.migrationIcon}><Folder size={20} /></span><div><h2>{folder.name}</h2><p>{job ? details(job) : folder.size_bytes ? `${bytes(folder.size_bytes)} in Zoho` : "Ready to migrate"}</p><small>{folder.destination_path}{job ? ` / Attempt ${job.attempts} / Updated ${dateTime(job.updated_at)}` : ""}</small></div></div>
         {job && <div className={styles.progress} aria-label={`${folder.name} migration ${percent}%`}><span style={{ width: `${percent}%` }} /></div>}
-        <div className={styles.migrationStatus}><span className={styles.badge} data-state={job?.status || "ready"}>{job ? job.status : "Not migrated"}</span>{action(folder)}</div>
+        <div className={styles.migrationStatus}><button type="button" className={shared.iconButton} title={`Open ${folder.name}`} aria-label={`Open ${folder.name}`} disabled={!!busy} onClick={() => navigate([...ancestorIds, folder.source_folder_id])}><ChevronRight size={18} /></button><span className={styles.badge} data-state={job?.status || "ready"}>{job ? job.status : "Not migrated"}</span>{action(folder)}</div>
         {job?.last_error && <p className={styles.migrationError} role="status">{job.last_error}</p>}
       </article>;
     })}</div>}
+    {!!otherJobs.length && <section className={styles.migrationJobs} aria-labelledby="migration-jobs-title"><h2 id="migration-jobs-title">Migration jobs</h2><div>{otherJobs.map(job => <article key={job.id}><span className={styles.migrationIcon}><Folder size={18} /></span><div><strong>{job.source_folder_name}</strong><small>{job.destination_path}</small></div><span className={styles.badge} data-state={job.status}>{job.status}</span><span className={job.status === "complete" ? styles.complete : styles.running}>{job.status === "complete" ? "Verified" : job.phase}</span></article>)}</div></section>}
   </section>;
 }
 

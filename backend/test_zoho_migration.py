@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from database import get_db
 from zoho_inventory import InventoryError
-from zoho_migration import MIGRATION_FILE_BYTES, MIKAN_ROOT_ID, MigrationDeferred, create_migration_router, current_entry, download_historical, exact_source_size, execute_job, historical_url, historical_versions, inventory_folder, migration_file_limit, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_folder, storage_preflight, transfer_item, transfer_items_parallel, try_lock_root, upload_multipart, verify_ready_checkpoint
+from zoho_migration import MIGRATION_FILE_BYTES, MIKAN_ROOT_ID, MigrationDeferred, create_migration_router, current_entry, download_historical, exact_source_size, execute_job, historical_url, historical_versions, inventory_folder, migration_file_limit, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_directory, source_folder, storage_preflight, transfer_item, transfer_items_parallel, try_lock_root, upload_multipart, verify_ready_checkpoint
 
 
 class Transaction:
@@ -42,6 +42,29 @@ class ZohoMigrationTests(unittest.TestCase):
         self.assertEqual(folder, {'source_folder_id': 'folder123', 'name': '6. Lesson Learned', 'size_bytes': 421752})
 
     @patch('zoho_migration.children')
+    def test_source_directory_validates_ancestry_and_preserves_destination_paths(self, children):
+        office = {'id': 'office123', 'attributes': {
+            'name': 'Office Directory', 'is_folder': True, 'storage_info': {'size_in_bytes': '6870000000000'},
+        }}
+        accounts = {'id': 'accounts123', 'attributes': {
+            'name': 'Accounts', 'is_folder': True, 'storage_info': {'size_in_bytes': '1700000000000'},
+        }}
+        children.side_effect = [[office], [accounts]]
+
+        directory = source_directory(Mock(), ['office123'])
+
+        self.assertEqual(directory['breadcrumbs'][-1]['destination_path'], 'Mikan/Office Directory')
+        self.assertEqual(directory['items'], [{
+            'source_folder_id': 'accounts123', 'name': 'Accounts', 'size_bytes': 1700000000000,
+            'destination_path': 'Mikan/Office Directory/Accounts',
+        }])
+
+    @patch('zoho_migration.children', return_value=[])
+    def test_source_directory_rejects_forged_ancestry(self, _children):
+        with self.assertRaisesRegex(InventoryError, 'ancestry changed'):
+            source_directory(Mock(), ['office123'])
+
+    @patch('zoho_migration.children')
     def test_inventory_uses_folder_listing_metadata_without_direct_lookup(self, children):
         root = {'id': 'project123', 'attributes': {'name': 'Project-2020', 'is_folder': True}}
         children.side_effect = [[root], []]
@@ -61,6 +84,19 @@ class ZohoMigrationTests(unittest.TestCase):
         items = inventory_folder(Mock(), 'eugine123', 'Eugine')
 
         self.assertEqual(len(items[1]['destination_path']), 263)
+
+    @patch('zoho_migration.children')
+    def test_nested_inventory_includes_ancestors_at_original_destination(self, children):
+        office = {'id': 'office123', 'attributes': {'name': 'Office Directory', 'is_folder': True}}
+        accounts = {'id': 'accounts123', 'attributes': {'name': 'Accounts', 'is_folder': True}}
+        children.side_effect = [[office], [accounts], []]
+
+        items = inventory_folder(Mock(), 'accounts123', 'Accounts', 'Mikan/Office Directory/Accounts')
+
+        self.assertEqual([(item['source_id'], item['destination_path']) for item in items], [
+            ('office123', 'Mikan/Office Directory'),
+            ('accounts123', 'Mikan/Office Directory/Accounts'),
+        ])
 
     @patch('zoho_migration.children')
     def test_inventory_reports_repeated_folder_identity_separately(self, children):
@@ -621,12 +657,25 @@ class ZohoMigrationTests(unittest.TestCase):
         {'source_folder_id': 'training123', 'name': '7. Training', 'size_bytes': 2000},
     ])
     def test_batch_start_queues_distinct_jobs_in_selection_order(self, _folders):
-        office = {'id': uuid4(), 'source_folder_id': 'office123', 'status': 'queued'}
-        training = {'id': uuid4(), 'source_folder_id': 'training123', 'status': 'queued'}
+        office = {'id': uuid4(), 'source_folder_id': 'office123',
+              'destination_path': 'Mikan/1. Office', 'status': 'queued'}
+        training = {'id': uuid4(), 'source_folder_id': 'training123',
+                'destination_path': 'Mikan/7. Training', 'status': 'queued'}
         connection = Mock()
         connection.transaction.return_value = Transaction()
-        results = iter((None, office, None, training))
-        connection.execute.return_value.fetchone.side_effect = lambda: next(results)
+        existing_jobs = Mock()
+        existing_jobs.fetchall.return_value = []
+        missing_office = Mock()
+        missing_office.fetchone.return_value = None
+        created_office = Mock()
+        created_office.fetchone.return_value = office
+        missing_training = Mock()
+        missing_training.fetchone.return_value = None
+        created_training = Mock()
+        created_training.fetchone.return_value = training
+        results = iter((existing_jobs, missing_office, created_office,
+                missing_training, created_training))
+        connection.execute.side_effect = lambda *_args, **_kwargs: next(results)
 
         with TestClient(self.app(connection)) as client:
             response = client.post('/company/teams/data/migration/jobs/batch', json={
@@ -637,6 +686,69 @@ class ZohoMigrationTests(unittest.TestCase):
         self.assertEqual([item['source_folder_id'] for item in response.json()['items']], ['office123', 'training123'])
         inserts = [call for call in connection.execute.call_args_list if 'INSERT INTO zoho_migration_job' in call.args[0]]
         self.assertEqual([call.args[1][-1] for call in inserts], ['Mikan/1. Office', 'Mikan/7. Training'])
+
+    @patch('zoho_migration.browse_source_folders', return_value={'items': [
+        {'source_folder_id': 'accounts123', 'name': 'Accounts', 'size_bytes': 1700,
+         'destination_path': 'Mikan/Office Directory/Accounts'},
+        {'source_folder_id': 'legal123', 'name': 'Legal', 'size_bytes': 900,
+         'destination_path': 'Mikan/Office Directory/Legal'},
+    ]})
+    def test_nested_batch_preserves_original_parent_directory(self, _folders):
+        accounts = {'id': uuid4(), 'source_folder_id': 'accounts123',
+                    'destination_path': 'Mikan/Office Directory/Accounts', 'status': 'queued'}
+        legal = {'id': uuid4(), 'source_folder_id': 'legal123',
+                 'destination_path': 'Mikan/Office Directory/Legal', 'status': 'queued'}
+        connection = Mock()
+        connection.transaction.return_value = Transaction()
+        existing_jobs = Mock()
+        existing_jobs.fetchall.return_value = []
+        missing_accounts = Mock()
+        missing_accounts.fetchone.return_value = None
+        created_accounts = Mock()
+        created_accounts.fetchone.return_value = accounts
+        missing_legal = Mock()
+        missing_legal.fetchone.return_value = None
+        created_legal = Mock()
+        created_legal.fetchone.return_value = legal
+        results = iter((existing_jobs, missing_accounts, created_accounts,
+                missing_legal, created_legal))
+        connection.execute.side_effect = lambda *_args, **_kwargs: next(results)
+
+        with TestClient(self.app(connection)) as client:
+            response = client.post('/company/teams/data/migration/jobs/batch', json={
+                'source_folder_ids': ['accounts123', 'legal123'],
+                'ancestor_ids': ['office123'],
+            })
+
+        self.assertEqual(response.status_code, 202, response.text)
+        inserts = [call for call in connection.execute.call_args_list if 'INSERT INTO zoho_migration_job' in call.args[0]]
+        self.assertEqual([call.args[1][-1] for call in inserts], [
+            'Mikan/Office Directory/Accounts', 'Mikan/Office Directory/Legal',
+        ])
+
+    @patch('zoho_migration.browse_source_folders', return_value={'items': [
+        {'source_folder_id': 'accounts123', 'name': 'Accounts', 'size_bytes': 1700,
+         'destination_path': 'Mikan/Office Directory/Accounts'},
+    ]})
+    def test_nested_batch_rejects_overlap_with_existing_parent_job(self, _folders):
+        connection = Mock()
+        connection.transaction.return_value = Transaction()
+        existing_jobs = Mock()
+        existing_jobs.fetchall.return_value = [{
+            'source_folder_id': 'office123', 'destination_path': 'Mikan/Office Directory', 'status': 'complete',
+        }]
+        missing_accounts = Mock()
+        missing_accounts.fetchone.return_value = None
+        results = iter((existing_jobs, missing_accounts))
+        connection.execute.side_effect = lambda *_args, **_kwargs: next(results)
+
+        with TestClient(self.app(connection)) as client:
+            response = client.post('/company/teams/data/migration/jobs/batch', json={
+                'source_folder_ids': ['accounts123'], 'ancestor_ids': ['office123'],
+            })
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertIn('overlaps', response.json()['detail'])
 
     @patch('zoho_migration.list_source_folders', return_value=[])
     def test_batch_start_rejects_duplicate_ids_without_database_writes(self, _folders):

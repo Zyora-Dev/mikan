@@ -51,6 +51,7 @@ class MigrationStart(BaseModel):
 class MigrationBatchStart(BaseModel):
     model_config = ConfigDict(extra='forbid')
     source_folder_ids: list[str] = Field(min_length=1, max_length=25)
+    ancestor_ids: list[str] = Field(default_factory=list, max_length=50)
 
 
 def exact_nonnegative_integer(*values):
@@ -185,7 +186,60 @@ def historical_versions(active_records, approved_records, file_item):
     return list(versions.values()), current[0]['source_id']
 
 
-def inventory_folder(reader, source_id, root_name):
+def source_directory(reader, ancestor_ids):
+    if any(not re.fullmatch(r'[A-Za-z0-9]{1,200}', identifier) for identifier in ancestor_ids):
+        raise InventoryError('Invalid source folder ancestry.')
+    parent_id = MIKAN_ROOT_ID
+    path = DESTINATION_ROOT
+    breadcrumbs = [{'source_folder_id': MIKAN_ROOT_ID, 'name': DESTINATION_ROOT, 'destination_path': path}]
+    for identifier in ancestor_ids:
+        endpoint = (f'/teamfolders/{MIKAN_ROOT_ID}/files' if parent_id == MIKAN_ROOT_ID
+                    else f'/files/{parent_id}/files')
+        matches = [record for record in children(reader, endpoint, 'folders') if record.get('id') == identifier]
+        if len(matches) != 1:
+            raise InventoryError('Source folder ancestry changed or is no longer accessible.')
+        folder = source_folder(matches[0])
+        path = f"{path}/{folder['name']}"
+        if len(path) > MAX_ROOT_PATH_LENGTH:
+            raise InventoryError(f'Source path exceeds the {MAX_ROOT_PATH_LENGTH}-character destination limit: {path}')
+        breadcrumbs.append({**folder, 'destination_path': path})
+        parent_id = identifier
+    endpoint = (f'/teamfolders/{MIKAN_ROOT_ID}/files' if parent_id == MIKAN_ROOT_ID
+                else f'/files/{parent_id}/files')
+    folders = []
+    for record in children(reader, endpoint, 'folders'):
+        folder = source_folder(record)
+        destination_path = f"{path}/{folder['name']}"
+        if len(destination_path) > MAX_ROOT_PATH_LENGTH:
+            raise InventoryError(f'Source path exceeds the {MAX_ROOT_PATH_LENGTH}-character destination limit: {destination_path}')
+        folders.append({**folder, 'destination_path': destination_path})
+    return {'breadcrumbs': breadcrumbs, 'items': folders}
+
+
+def resolve_source_path(reader, source_id, destination_path):
+    prefix = f'{DESTINATION_ROOT}/'
+    if not destination_path.startswith(prefix):
+        raise InventoryError('Migration destination is outside the Mikan root.')
+    names = destination_path[len(prefix):].split('/')
+    if not names or any(clean_name(name) != name for name in names):
+        raise InventoryError('Migration destination path is invalid.')
+    parent_id = MIKAN_ROOT_ID
+    ancestors = []
+    for index, name in enumerate(names):
+        endpoint = (f'/teamfolders/{MIKAN_ROOT_ID}/files' if parent_id == MIKAN_ROOT_ID
+                    else f'/files/{parent_id}/files')
+        matches = [record for record in children(reader, endpoint, 'folders')
+                   if record.get('attributes', {}).get('name') == name]
+        if len(matches) != 1 or (index == len(names) - 1 and matches[0].get('id') != source_id):
+            if len(names) == 1:
+                raise InventoryError('Source folder is no longer uniquely present under Mikan.')
+            raise InventoryError('Source folder path changed or is no longer uniquely accessible.')
+        ancestors.append(matches[0])
+        parent_id = matches[0]['id']
+    return ancestors
+
+
+def inventory_folder(reader, source_id, root_name, destination_path=None):
     items = []
     seen = set()
 
@@ -240,11 +294,27 @@ def inventory_folder(reader, source_id, root_name):
             )
             file_item['source_metadata']['current_version_id'] = current_version_id
             items.extend(historical)
-    roots = [record for record in children(reader, f'/teamfolders/{MIKAN_ROOT_ID}/files', 'folders')
-             if record.get('id') == source_id]
-    if len(roots) != 1:
-        raise InventoryError('Source folder is no longer uniquely present under Mikan.')
-    visit(roots[0], MIKAN_ROOT_ID, DESTINATION_ROOT, root_name)
+    destination_path = destination_path or f'{DESTINATION_ROOT}/{root_name}'
+    ancestry = resolve_source_path(reader, source_id, destination_path)
+    for index, ancestor in enumerate(ancestry[:-1]):
+        attributes = ancestor.get('attributes', {})
+        name = clean_name(attributes.get('name'))
+        path = '/'.join([DESTINATION_ROOT, *[
+            clean_name(item.get('attributes', {}).get('name')) for item in ancestry[:index + 1]
+        ]])
+        items.append({
+            'kind': 'folder', 'source_id': ancestor['id'],
+            'source_parent_id': MIKAN_ROOT_ID if index == 0 else ancestry[index - 1]['id'],
+            'source_file_id': None, 'source_version_id': None, 'source_name': name,
+            'destination_path': path, 'version_label': None, 'size_bytes': 0,
+            'source_created_at': str(attributes.get('created_time_in_millisecond') or ''),
+            'source_modified_at': str(attributes.get('modified_time_in_millisecond') or ''),
+            'source_metadata': attributes,
+        })
+        seen.add(ancestor['id'])
+    parent_path, _, _name = destination_path.rpartition('/')
+    parent_id = MIKAN_ROOT_ID if len(ancestry) == 1 else ancestry[-2]['id']
+    visit(ancestry[-1], parent_id, parent_path, root_name)
     if len({(item['kind'], item['source_id']) for item in items}) != len(items):
         raise InventoryError('Repeated source item detected during inventory.')
     return items
@@ -260,6 +330,18 @@ def list_source_folders():
         if root.get('id') != MIKAN_ROOT_ID or attributes.get('name') != 'Mikan' or attributes.get('is_partial_lib'):
             raise InventoryError('Mikan source identity or access changed.')
         return [source_folder(record) for record in children(reader, f'/teamfolders/{MIKAN_ROOT_ID}/files', 'folders')]
+
+
+def browse_source_folders(ancestor_ids):
+    credentials = migration_credentials()
+    timeout = httpx.Timeout(20, connect=5)
+    with httpx.Client(timeout=timeout, follow_redirects=False, trust_env=False) as client:
+        reader = WorkDriveReader(client, credentials)
+        root = reader.get(f'/teamfolders/{MIKAN_ROOT_ID}').get('data', {})
+        attributes = root.get('attributes', {})
+        if root.get('id') != MIKAN_ROOT_ID or attributes.get('name') != 'Mikan' or attributes.get('is_partial_lib'):
+            raise InventoryError('Mikan source identity or access changed.')
+        return source_directory(reader, ancestor_ids)
 
 
 def job_dict(record):
@@ -285,7 +367,11 @@ def try_lock_root(connection, company_id):
 def repair_legacy_destination(connection, job, items):
     old_root = job['source_folder_name']
     new_root = f'{DESTINATION_ROOT}/{old_root}'
-    if job['destination_path'] == new_root:
+    if job['destination_path'] != old_root:
+        if any(item['destination_path'] != job['destination_path']
+               and not item['destination_path'].startswith(job['destination_path'] + '/')
+               and not job['destination_path'].startswith(item['destination_path'] + '/') for item in items):
+            raise InventoryError('Migration destination checkpoint is inconsistent; nothing moved.')
         return items
     if job['destination_path'] != old_root or any(
             item['destination_path'] != old_root and not item['destination_path'].startswith(old_root + '/')
@@ -806,12 +892,11 @@ def execute_job(connection, job):
             (job['id'],)).fetchall()
         if not items:
             connection.execute("UPDATE zoho_migration_job SET status='inventory',phase='Reading source',attempts=attempts+1,updated_at=clock_timestamp() WHERE id=%s", (job['id'],))
-            items = inventory_folder(reader, job['source_folder_id'], job['source_folder_name'])
+            items = inventory_folder(reader, job['source_folder_id'], job['source_folder_name'], job['destination_path'])
             persist_inventory(connection, job, items)
             items = connection.execute('SELECT * FROM zoho_migration_item WHERE job_id=%s ORDER BY destination_path,kind,source_id',
                 (job['id'],)).fetchall()
         items = repair_legacy_destination(connection, job, items)
-        job = {**job, 'destination_path': f"{DESTINATION_ROOT}/{job['source_folder_name']}"}
         items = prune_unstarted_current_version_duplicates(connection, reader, job, items)
         storage = reserve_items(connection, job, items)
         items = connection.execute('SELECT * FROM zoho_migration_item WHERE job_id=%s ORDER BY destination_path,kind,source_id',
@@ -897,6 +982,20 @@ def process_migrations():
 def create_migration_router(company_dependency, origin_dependency):
     router = APIRouter(prefix='/company/teams/data/migration', tags=['company-data-migration'])
 
+    @router.get('/browse')
+    def browse_migration_folders(ancestor_ids: str = '', admin=Depends(company_dependency), connection=Depends(get_db)):
+        identifiers = [value for value in ancestor_ids.split(',') if value]
+        jobs = connection.execute(
+            f'SELECT {JOB_COLUMNS} FROM zoho_migration_job WHERE company_id=%s AND source_root_id=%s',
+            (admin['company_id'], MIKAN_ROOT_ID),
+        ).fetchall()
+        try:
+            directory = browse_source_folders(identifiers)
+        except (InventoryError, httpx.HTTPError, OSError, ValueError) as error:
+            return {'items': [], 'breadcrumbs': [], 'jobs': [job_dict(row) for row in jobs],
+                    'source_unavailable': True, 'error': str(error) if isinstance(error, InventoryError) else None}
+        return {**directory, 'jobs': [job_dict(row) for row in jobs], 'source_unavailable': False}
+
     @router.get('')
     def migration_folders(admin=Depends(company_dependency), connection=Depends(get_db)):
         jobs = connection.execute(
@@ -947,10 +1046,16 @@ def create_migration_router(company_dependency, origin_dependency):
     @router.post('/jobs/batch', status_code=202, dependencies=[Depends(origin_dependency)])
     def start_migrations(payload: MigrationBatchStart, admin=Depends(company_dependency), connection=Depends(get_db)):
         source_ids = list(dict.fromkeys(payload.source_folder_ids))
-        if len(source_ids) != len(payload.source_folder_ids) or any(not re.fullmatch(r'[A-Za-z0-9]{1,200}', value) for value in source_ids):
+        if (len(source_ids) != len(payload.source_folder_ids)
+                or any(not re.fullmatch(r'[A-Za-z0-9]{1,200}', value) for value in [*source_ids, *payload.ancestor_ids])):
             raise HTTPException(422, 'Select distinct valid Zoho folders.')
         try:
-            folders = {folder['source_folder_id']: folder for folder in list_source_folders()}
+            if payload.ancestor_ids:
+                available = browse_source_folders(payload.ancestor_ids)['items']
+            else:
+                available = [{**folder, 'destination_path': f"{DESTINATION_ROOT}/{folder['name']}"}
+                             for folder in list_source_folders()]
+            folders = {folder['source_folder_id']: folder for folder in available}
         except (InventoryError, httpx.HTTPError, OSError, ValueError) as error:
             raise HTTPException(503, 'Zoho folders are temporarily unavailable.') from error
         missing = [source_id for source_id in source_ids if source_id not in folders]
@@ -958,20 +1063,29 @@ def create_migration_router(company_dependency, origin_dependency):
             raise HTTPException(404, 'One or more selected Zoho folders were not found under Mikan.')
         jobs = []
         with connection.transaction():
+            existing_jobs = connection.execute(
+                f'SELECT {JOB_COLUMNS} FROM zoho_migration_job WHERE company_id=%s AND source_root_id=%s',
+                (admin['company_id'], MIKAN_ROOT_ID),
+            ).fetchall()
             for source_id in source_ids:
                 existing = select_job(connection, admin['company_id'], source_id)
                 if existing:
                     jobs.append(job_dict(existing))
                     continue
                 folder = folders[source_id]
+                destination_path = folder['destination_path']
+                if any(row['destination_path'] != destination_path and (
+                        row['destination_path'].startswith(destination_path + '/')
+                        or destination_path.startswith(row['destination_path'] + '/')) for row in existing_jobs):
+                    raise HTTPException(409, 'A selected folder overlaps an existing migration job.')
                 job = connection.execute(
                     f'''INSERT INTO zoho_migration_job
                         (company_id,source_root_id,source_folder_id,source_folder_name,destination_path)
                         VALUES (%s,%s,%s,%s,%s) RETURNING {JOB_COLUMNS}''',
-                    (admin['company_id'], MIKAN_ROOT_ID, source_id, folder['name'],
-                     f"{DESTINATION_ROOT}/{folder['name']}"),
+                    (admin['company_id'], MIKAN_ROOT_ID, source_id, folder['name'], destination_path),
                 ).fetchone()
                 jobs.append(job_dict(job))
+                existing_jobs.append(job)
         return {'items': jobs}
 
     @router.post('/jobs/{identifier}/retry', status_code=202, dependencies=[Depends(origin_dependency)])
