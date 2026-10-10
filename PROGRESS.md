@@ -1,9 +1,10 @@
 # Mikan Progress
 
-## Zoho Live-File / Version-History Reconciliation - 2026-10-10 (Local Verified)
+## Zoho Live-File / Version-History Reconciliation - 2026-10-10 (Production Deployed)
 - Quotation `2. 2023` attempt 1 completed its full source traversal but failed before persistence because one live-file byte size differed from Zoho's unique highest active version-history record. The former rule treated that difference as fatal, discarded the whole in-memory inventory, and left the job at 0/0 after a 30-60 minute scan.
 - A unique highest version whose byte size differs from the live file is now retained as a historical version while the live file remains authoritative for the current file. Matching highest versions are still excluded as current-version duplicates; ambiguous highest versions, conflicting metadata, missing exact sizes, and missing active-version metadata still fail closed.
-- PASS the three focused reconciliation regressions, all 68 migration tests, Python compilation, and patch whitespace validation. Transfer-path review confirms the live file and retained historical version receive separate destination identities, exact byte checks, SHA-256 verification, and immutable object writes. This repair is local only: it has not been committed, pushed, deployed, or retried in production.
+- PASS the three focused reconciliation regressions, all 68 migration tests, Python compilation, and patch whitespace validation. Transfer-path review confirms the live file and retained historical version receive separate destination identities, exact byte checks, SHA-256 verification, and immutable object writes.
+- Commit `576a9ee` was pushed to `origin/main` and manually deployed to Render service `srv-db27a9jbc2fs73fhanbg` as deploy `dep-db4sar2d0e5s73dalnd0`. Render reports the deploy succeeded in 1m19s and identifies `576a9ee` as the active Live commit. The Data Administration migration view loaded after deployment; no failed migration was retried as part of the release.
 
 ## Stalled Migration Job Cleanup - 2026-10-10 (Local Verified)
 - Added a company-admin `DELETE /company/teams/data/migration/jobs/{id}/retry` operation so a non-complete migration can be removed before restarting it. Cleanup is company-scoped, deletes `zoho_migration_item` checkpoints before the parent `zoho_migration_job` in one transaction, rejects completed jobs, and does not delete company-root destination records, object-storage data, or Zoho source data.
