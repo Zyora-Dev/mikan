@@ -1073,7 +1073,11 @@ def process_migrations():
                 AND provider_wait.status='inventory' AND provider_wait.phase='Waiting for provider'
                 AND provider_wait.updated_at>clock_timestamp()-(%s * INTERVAL '1 second')
             ))
-            ORDER BY CASE WHEN status IN ('transferring','verifying') THEN 0 ELSE 1 END,updated_at,id
+            ORDER BY CASE
+                WHEN status IN ('transferring','verifying') THEN 0
+                WHEN phase<>'Waiting for provider' THEN 1
+                ELSE 2
+            END,updated_at,id
             LIMIT 32""", (INVENTORY_RETRY_SECONDS, INVENTORY_RETRY_SECONDS)).fetchall()
         job = None
         lock_key = None

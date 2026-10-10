@@ -942,6 +942,8 @@ class ZohoMigrationTests(unittest.TestCase):
         self.assertIn("status='inventory'", query)
         self.assertIn('provider_wait.company_id=zoho_migration_job.company_id', query)
         self.assertIn("status IN ('transferring','verifying') THEN 0", query)
+        self.assertIn("phase<>'Waiting for provider' THEN 1", query)
+        self.assertIn('ELSE 2', query)
         self.assertEqual(connection.execute.call_args_list[0].args[1],
                  (INVENTORY_RETRY_SECONDS, INVENTORY_RETRY_SECONDS))
 
