@@ -1062,7 +1062,8 @@ def execute_job(connection, job):
 def process_migrations():
     with connect() as connection:
         connection.autocommit = True
-        jobs = connection.execute("""SELECT * FROM zoho_migration_job
+        jobs = connection.execute("""WITH eligible AS (
+            SELECT * FROM zoho_migration_job
             WHERE status IN ('queued','inventory','transferring','verifying')
             AND (phase<>'Waiting for provider'
                 OR (status='inventory' AND updated_at<=clock_timestamp()-(%s * INTERVAL '1 second'))
@@ -1073,6 +1074,20 @@ def process_migrations():
                 AND provider_wait.status='inventory' AND provider_wait.phase='Waiting for provider'
                 AND provider_wait.updated_at>clock_timestamp()-(%s * INTERVAL '1 second')
             ))
+        ), ranked_inventory AS (
+            SELECT eligible.*,row_number() OVER (
+                PARTITION BY company_id
+                ORDER BY CASE WHEN phase<>'Waiting for provider' THEN 0 ELSE 1 END,updated_at,id
+            ) AS inventory_rank
+            FROM eligible
+            WHERE status IN ('queued','inventory')
+        ), candidates AS (
+            SELECT eligible.*,0 AS inventory_rank FROM eligible
+            WHERE status IN ('transferring','verifying')
+            UNION ALL
+            SELECT * FROM ranked_inventory WHERE inventory_rank=1
+        )
+            SELECT * FROM candidates
             ORDER BY CASE
                 WHEN status IN ('transferring','verifying') THEN 0
                 WHEN phase<>'Waiting for provider' THEN 1

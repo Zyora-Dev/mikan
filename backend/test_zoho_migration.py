@@ -941,6 +941,8 @@ class ZohoMigrationTests(unittest.TestCase):
         self.assertNotIn("'failed'", query)
         self.assertIn("status='inventory'", query)
         self.assertIn('provider_wait.company_id=zoho_migration_job.company_id', query)
+        self.assertIn('PARTITION BY company_id', query)
+        self.assertIn('WHERE inventory_rank=1', query)
         self.assertIn("status IN ('transferring','verifying') THEN 0", query)
         self.assertIn("phase<>'Waiting for provider' THEN 1", query)
         self.assertIn('ELSE 2', query)
