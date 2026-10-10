@@ -1067,6 +1067,7 @@ def process_migrations():
         jobs = connection.execute("""WITH eligible AS (
             SELECT * FROM zoho_migration_job
             WHERE status IN ('queued','inventory','transferring','verifying')
+            AND manifest_status='legacy'
             AND (phase<>'Waiting for provider'
                 OR (status='inventory' AND updated_at<=clock_timestamp()-(%s * INTERVAL '1 second'))
                 OR (status<>'inventory' AND updated_at<=clock_timestamp()-INTERVAL '30 seconds'))
