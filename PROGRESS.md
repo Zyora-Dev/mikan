@@ -1,9 +1,9 @@
 # Mikan Progress
 
-## Zoho Exact-Name and Version-Metadata Retry Repair - 2026-10-10 (Local Verified)
+## Zoho Exact-Name and Version-Metadata Retry Repair - 2026-10-10 (Pushed, Deployment Blocked on Login)
 - `clean_name` now preserves valid Zoho names with leading or trailing whitespace exactly instead of rejecting them. Empty names, `.`/`..`, path separators, control characters, and DEL remain fail-closed.
 - `/versions` and `/approvedversions` metadata requests now receive four bounded attempts for transport failures and HTTP 408/425/429/5xx responses with exponential delays. Existing one-time 401 token refresh, contextual HTTP errors, JSON validation, source-version reconciliation, exact byte checks, and SHA-256 verification remain unchanged.
-- PASS all 66 `test_zoho_migration` tests, focused whitespace/transient regressions, Python compilation, and edited-file diagnostics. Production deployment and job retries are not yet claimed. Unrelated `backend/zoho_migrate.py` and lesson-learned files remain untouched.
+- PASS all 66 `test_zoho_migration` tests, focused whitespace/transient regressions, Python compilation, edited-file diagnostics, and patch whitespace validation. Focused commit `ea0b6c2` is on `origin/main`. The manual `mikan-api` deployment is blocked because the fresh Render browser session requires GitHub authentication; no production deploy or job retry is claimed. Unrelated `backend/zoho_migrate.py` and lesson-learned files remain untouched.
 
 ## Zoho Current-Version Size Reconciliation Repair - 2026-10-09 (Production Deployed, Insufficient)
 - The failed `2. 2023` inventory stopped before persistence because current-file parsing prioritized `storage_info.size_in_bytes`, while version parsing correctly prioritized the version's `file_size`. Zoho uses storage totals to include retained history (previously proven by a 77,479-byte current file whose 115,634-byte storage total equals its 77,479 + 38,155-byte versions), so comparing that aggregate with the latest active version can falsely report `Current source version does not reconcile with the current file.`
