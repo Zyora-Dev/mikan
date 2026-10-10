@@ -1253,4 +1253,28 @@ def create_migration_router(company_dependency, origin_dependency):
             raise HTTPException(409, 'Only a failed migration can be retried.')
         return job_dict(job)
 
+    @router.delete('/jobs/{identifier}/retry', dependencies=[Depends(origin_dependency)])
+    def delete_migration(identifier: UUID, admin=Depends(company_dependency), connection=Depends(get_db)):
+        job = connection.execute(
+            'SELECT id,source_folder_id,status FROM zoho_migration_job WHERE id=%s AND company_id=%s',
+            (identifier, admin['company_id']),
+        ).fetchone()
+        if not job:
+            raise HTTPException(404, 'Migration job not found.')
+        if job['status'] == 'complete':
+            raise HTTPException(409, 'Completed migration records cannot be cleared.')
+        with connection.transaction():
+            connection.execute(
+                'DELETE FROM zoho_migration_item WHERE job_id=%s AND company_id=%s',
+                (identifier, admin['company_id']),
+            )
+            deleted = connection.execute(
+                """DELETE FROM zoho_migration_job
+                    WHERE id=%s AND company_id=%s AND status<>'complete' RETURNING id""",
+                (identifier, admin['company_id']),
+            ).fetchone()
+        if not deleted:
+            raise HTTPException(409, 'Migration job changed while it was being cleared.')
+        return {'cleared': True, 'id': identifier}
+
     return router

@@ -857,6 +857,43 @@ class ZohoMigrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 409, response.text)
         self.assertEqual(connection.execute.call_args.args[1], (identifier, 7))
 
+    def test_delete_clears_company_job_items_before_non_complete_job(self):
+        identifier = uuid4()
+        connection = Mock()
+        connection.transaction.return_value = Transaction()
+        job = Mock()
+        job.fetchone.return_value = {
+            'id': identifier, 'source_folder_id': 'project2026', 'status': 'inventory',
+        }
+        delete_items = Mock()
+        delete_job = Mock()
+        delete_job.fetchone.return_value = {'id': identifier}
+        connection.execute.side_effect = [job, delete_items, delete_job]
+
+        with TestClient(self.app(connection)) as client:
+            response = client.delete(f'/company/teams/data/migration/jobs/{identifier}/retry')
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.json()['cleared'])
+        calls = connection.execute.call_args_list
+        self.assertIn('DELETE FROM zoho_migration_item', calls[1].args[0])
+        self.assertIn('DELETE FROM zoho_migration_job', calls[2].args[0])
+        self.assertEqual(calls[1].args[1], (identifier, 7))
+        self.assertEqual(calls[2].args[1], (identifier, 7))
+
+    def test_delete_rejects_complete_job_without_mutation(self):
+        identifier = uuid4()
+        connection = Mock()
+        connection.execute.return_value.fetchone.return_value = {
+            'id': identifier, 'source_folder_id': 'finished', 'status': 'complete',
+        }
+
+        with TestClient(self.app(connection)) as client:
+            response = client.delete(f'/company/teams/data/migration/jobs/{identifier}/retry')
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(connection.execute.call_count, 1)
+
     @patch('zoho_migration.list_source_folders')
     def test_active_job_poll_uses_durable_progress_without_zoho_request(self, list_folders):
         for status in ('queued', 'inventory', 'transferring', 'verifying'):
