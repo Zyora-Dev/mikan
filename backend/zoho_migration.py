@@ -233,8 +233,10 @@ def historical_versions(active_records, approved_records, file_item):
     except (InvalidOperation, ValueError):
         raise InventoryError('Active source versions have non-numeric labels; current version cannot be reconciled.') from None
     current = [item for item, number in numbered if number == highest]
-    if len(current) != 1 or current[0]['size_bytes'] != file_item['size_bytes']:
+    if len(current) != 1:
         raise InventoryError('Current source version does not reconcile with the current file.')
+    if current[0]['size_bytes'] != file_item['size_bytes']:
+        return list(versions.values()), None
     versions.pop(current[0]['source_id'])
     return list(versions.values()), current[0]['source_id']
 

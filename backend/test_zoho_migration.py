@@ -408,13 +408,17 @@ class ZohoMigrationTests(unittest.TestCase):
                 {'id': 'file123-2b', 'attributes': {'version_number': 2.0, 'file_size': 77_479}},
             ], [], file_item)
 
-    def test_version_inventory_refuses_current_size_mismatch(self):
+    def test_version_inventory_preserves_highest_version_when_live_file_differs(self):
         file_item = {'source_id': 'file123', 'source_parent_id': 'folder123', 'source_name': 'Plan.pdf',
                      'destination_path': 'Mikan/Plans/Plan.pdf', 'size_bytes': 77_479}
-        with self.assertRaises(InventoryError):
-            historical_versions([{'id': 'file123-2', 'attributes': {
-                'version_number': 2.0, 'file_size': 1,
-            }}], [], file_item)
+
+        historical, current_id = historical_versions([{'id': 'file123-2', 'attributes': {
+            'version_number': 2.0, 'file_size': 1,
+        }}], [], file_item)
+
+        self.assertIsNone(current_id)
+        self.assertEqual([item['source_id'] for item in historical], ['file123-2'])
+        self.assertEqual(historical[0]['size_bytes'], 1)
 
     def test_version_inventory_accepts_alternate_exact_size_field(self):
         file_item = {'source_id': 'file123', 'source_parent_id': 'folder123', 'source_name': 'Plan.pdf',

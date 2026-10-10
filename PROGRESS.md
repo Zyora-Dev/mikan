@@ -1,5 +1,10 @@
 # Mikan Progress
 
+## Zoho Live-File / Version-History Reconciliation - 2026-10-10 (Local Verified)
+- Quotation `2. 2023` attempt 1 completed its full source traversal but failed before persistence because one live-file byte size differed from Zoho's unique highest active version-history record. The former rule treated that difference as fatal, discarded the whole in-memory inventory, and left the job at 0/0 after a 30-60 minute scan.
+- A unique highest version whose byte size differs from the live file is now retained as a historical version while the live file remains authoritative for the current file. Matching highest versions are still excluded as current-version duplicates; ambiguous highest versions, conflicting metadata, missing exact sizes, and missing active-version metadata still fail closed.
+- PASS the three focused reconciliation regressions, all 68 migration tests, Python compilation, and patch whitespace validation. Transfer-path review confirms the live file and retained historical version receive separate destination identities, exact byte checks, SHA-256 verification, and immutable object writes. This repair is local only: it has not been committed, pushed, deployed, or retried in production.
+
 ## Stalled Migration Job Cleanup - 2026-10-10 (Local Verified)
 - Added a company-admin `DELETE /company/teams/data/migration/jobs/{id}/retry` operation so a non-complete migration can be removed before restarting it. Cleanup is company-scoped, deletes `zoho_migration_item` checkpoints before the parent `zoho_migration_job` in one transaction, rejects completed jobs, and does not delete company-root destination records, object-storage data, or Zoho source data.
 - The one-time production target is exactly four jobs: `Mikan/1. Office/2. Project/2026` (`4c29eaa1-730c-47c0-9510-6f8f76404793`), `Mikan/1. Office/2. Project/2023` (`d98f8389-0d3b-4f52-b37d-4ba3d4055243`), `Mikan/1. Office/1. Quotation/2. 2023` (`e94c86dc-a99d-4d50-9b82-5aa1fe43114a`), and failed `Mikan/Void` (`f56779bb-719d-4cf1-94e1-32b1b39f067f`). Completed `Mikan/1. Office/VOID` is explicitly excluded.
