@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from database import get_db
 from zoho_inventory import InventoryError
-from zoho_migration import INVENTORY_RETRY_SECONDS, MIGRATION_FILE_BYTES, MIKAN_ROOT_ID, ZOHO_TOKEN_STATE, MigrationDeferred, authenticated_reader, create_migration_router, current_entry, disambiguate_duplicate_file_paths, download_historical, exact_source_size, execute_job, historical_url, historical_versions, inventory_folder, migration_file_limit, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_directory, source_folder, storage_preflight, transfer_item, transfer_items_parallel, try_lock_root, upload_multipart, verify_ready_checkpoint
+from zoho_migration import INVENTORY_RETRY_SECONDS, MIGRATION_FILE_BYTES, MIKAN_ROOT_ID, ZOHO_TOKEN_STATE, MigrationDeferred, authenticated_reader, clean_name, create_migration_router, current_entry, disambiguate_duplicate_file_paths, download_historical, exact_source_size, execute_job, historical_url, historical_versions, inventory_folder, migration_file_limit, process_migrations, prune_unstarted_current_version_duplicates, reader_relationship, repair_legacy_destination, reserve_items, source_directory, source_folder, storage_preflight, transfer_item, transfer_items_parallel, try_lock_root, upload_multipart, verify_ready_checkpoint
 
 
 class Transaction:
@@ -77,6 +77,27 @@ class ZohoMigrationTests(unittest.TestCase):
             'name': '6. Lesson Learned', 'is_folder': True, 'storage_info': {'size_in_bytes': '421752'},
         }})
         self.assertEqual(folder, {'source_folder_id': 'folder123', 'name': '6. Lesson Learned', 'size_bytes': 421752})
+
+    def test_clean_name_preserves_source_whitespace_exactly(self):
+        self.assertEqual(clean_name(' Quotation '), ' Quotation ')
+
+    @patch('zoho_migration.time.sleep')
+    def test_reader_relationship_retries_transient_metadata_response(self, sleep):
+        reader = Mock()
+        reader.access_token = 'token'
+        reader.api_domain = 'https://www.zohoapis.in'
+        reader.expires_at = float('inf')
+        reader.requests = 0
+        transient = Mock(status_code=429)
+        success = Mock(status_code=200)
+        success.json.return_value = {'data': [{'id': 'file123-1', 'attributes': {}}]}
+        reader.client.get.side_effect = [transient, success]
+
+        records = reader_relationship(reader, 'file123', 'versions')
+
+        self.assertEqual(records[0]['id'], 'file123-1')
+        self.assertEqual(reader.client.get.call_count, 2)
+        sleep.assert_called_once_with(1)
 
     @patch('zoho_migration.children')
     def test_source_directory_validates_ancestry_and_preserves_destination_paths(self, children):

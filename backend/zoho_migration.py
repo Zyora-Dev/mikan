@@ -138,7 +138,7 @@ def source_folder(record):
 
 
 def clean_name(value):
-    if (not isinstance(value, str) or not value or value != value.strip() or value in ('.', '..')
+    if (not isinstance(value, str) or not value or value in ('.', '..')
             or '/' in value or '\\' in value or any(ord(character) < 32 or ord(character) == 127 for character in value)):
         raise InventoryError('A source name cannot be preserved safely.')
     return value
@@ -149,16 +149,31 @@ def reader_relationship(reader, file_id, relationship):
         raise InventoryError('Invalid version metadata request.')
     if not reader.access_token or time.monotonic() >= reader.expires_at:
         reader.refresh()
-    for attempt in range(2):
-        response = reader.client.get(
-            f'{reader.api_domain}/workdrive/api/v1/files/{file_id}/{relationship}',
-            headers={'Authorization': f'Zoho-oauthtoken {reader.access_token}'},
-        )
+    refreshed = False
+    response = None
+    for attempt in range(1, 5):
+        try:
+            response = reader.client.get(
+                f'{reader.api_domain}/workdrive/api/v1/files/{file_id}/{relationship}',
+                headers={'Authorization': f'Zoho-oauthtoken {reader.access_token}'},
+            )
+        except httpx.TransportError:
+            if attempt == 4:
+                raise
+            time.sleep(2 ** (attempt - 1))
+            continue
         reader.requests += 1
-        if response.status_code != 401 or attempt:
-            break
-        reader.refresh()
+        if response.status_code == 401 and not refreshed:
+            reader.refresh()
+            refreshed = True
+            continue
+        if (response.status_code in (408, 425, 429) or response.status_code >= 500) and attempt < 4:
+            time.sleep(2 ** (attempt - 1))
+            continue
+        break
     context = f'Zoho {relationship} metadata for file {file_id}'
+    if response.status_code in (408, 425, 429) or response.status_code >= 500:
+        raise TransientProviderError(f'{context} temporarily returned HTTP {response.status_code}.')
     if response.status_code != 200:
         raise InventoryError(f'{context} returned HTTP {response.status_code}; migration stopped.')
     try:
